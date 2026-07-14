@@ -1,0 +1,22 @@
+from building import *
+import os
+
+cwd = GetCurrentDir()
+
+# collect C/C++/assembly sources in this directory
+src = []
+src = src + Glob('*.c')
+src = src + Glob('*.cpp')
+src = src + Glob('*.cxx')
+src = src + Glob('*.S')
+src = src + Glob('*.s')
+
+if src:
+    CPPPATH = [cwd]
+    inc_dir = os.path.join(cwd, 'include')
+    if os.path.isdir(inc_dir):
+        CPPPATH.append(inc_dir)
+    group = DefineGroup('Templates', src, CPPPATH=CPPPATH)
+    Return('group')
+else:
+    Return('')
