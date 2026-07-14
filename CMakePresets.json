@@ -1,0 +1,37 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "rt-studio-debug",
+      "displayName": "RT-Thread Studio GCC 5.4.1 (Debug)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/cmake-debug",
+      "toolchainFile": "${sourceDir}/cmake/arm-none-eabi-gcc.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "rt-studio-release",
+      "displayName": "RT-Thread Studio GCC 5.4.1 (Release)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/cmake-release",
+      "toolchainFile": "${sourceDir}/cmake/arm-none-eabi-gcc.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "rt-studio-debug",
+      "configurePreset": "rt-studio-debug"
+    },
+    {
+      "name": "rt-studio-release",
+      "configurePreset": "rt-studio-release"
+    }
+  ]
+}

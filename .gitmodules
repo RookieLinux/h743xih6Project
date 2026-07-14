@@ -1,0 +1,3 @@
+[submodule "packages/rt_vsnprintf_full-latest"]
+	path = packages/rt_vsnprintf_full-latest
+	url = https://github.com/mysterywolf/rt_vsnprintf_full.git
