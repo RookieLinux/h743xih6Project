@@ -666,6 +666,12 @@ void SDRAM_Init(void)
 #define GT911_SCL_GPIO_Port GPIOH
 #define GT911_INT_Pin GPIO_PIN_7
 #define GT911_INT_GPIO_Port GPIOH
+#define RW007_RESET_Pin GPIO_PIN_11
+#define RW007_RESET_GPIO_Port GPIOD
+#define RW007_INT_Pin GPIO_PIN_12
+#define RW007_INT_GPIO_Port GPIOD
+#define RW007_CS_Pin GPIO_PIN_12
+#define RW007_CS_GPIO_Port GPIOB
 void MX_GPIO_Init(void)
 {
 
@@ -694,6 +700,12 @@ void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GT911_SCL_GPIO_Port, GT911_SCL_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(RW007_RESET_GPIO_Port, RW007_RESET_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(RW007_CS_GPIO_Port, RW007_CS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin : LCD_BL_Pin */
   GPIO_InitStruct.Pin = LCD_BL_Pin;
@@ -729,6 +741,25 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GT911_INT_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : RW007_RESET_Pin */
+  GPIO_InitStruct.Pin = RW007_RESET_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
+  HAL_GPIO_Init(RW007_RESET_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : RW007_INT_Pin */
+  GPIO_InitStruct.Pin = RW007_INT_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(RW007_INT_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : RW007_CS_Pin */
+  GPIO_InitStruct.Pin = RW007_CS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
+  HAL_GPIO_Init(RW007_CS_GPIO_Port, &GPIO_InitStruct);
 }
 
 #define LCD_WIDTH   800
@@ -1095,6 +1126,92 @@ void dma2d_copy(uint32_t dst, uint32_t src, uint32_t x, uint32_t y, uint32_t w, 
   SCB_InvalidateDCache_by_Addr((uint32_t *)inv_start, (int32_t)inv_size);
 }
 
+
+SPI_HandleTypeDef hspi2;
+
+/* SPI2 init function */
+void MX_SPI2_Init(void)
+{
+  hspi2.Instance = SPI2;
+  hspi2.Init.Mode = SPI_MODE_MASTER;
+  hspi2.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi2.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi2.Init.NSS = SPI_NSS_SOFT;
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+  hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi2.Init.CRCPolynomial = 0x0;
+  hspi2.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
+  hspi2.Init.NSSPolarity = SPI_NSS_POLARITY_LOW;
+  hspi2.Init.FifoThreshold = SPI_FIFO_THRESHOLD_08DATA;
+  hspi2.Init.TxCRCInitializationPattern = SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
+  hspi2.Init.RxCRCInitializationPattern = SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
+  hspi2.Init.MasterSSIdleness = SPI_MASTER_SS_IDLENESS_00CYCLE;
+  hspi2.Init.MasterInterDataIdleness = SPI_MASTER_INTERDATA_IDLENESS_00CYCLE;
+  hspi2.Init.MasterReceiverAutoSusp = SPI_MASTER_RX_AUTOSUSP_DISABLE;
+  hspi2.Init.MasterKeepIOState = SPI_MASTER_KEEP_IO_STATE_ENABLE;
+  hspi2.Init.IOSwap = SPI_IO_SWAP_DISABLE;
+  if (HAL_SPI_Init(&hspi2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+void HAL_SPI_MspInit(SPI_HandleTypeDef* spiHandle)
+{
+
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
+  if(spiHandle->Instance==SPI2)
+  {
+  /** Initializes the peripherals clock
+  */
+    PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_SPI2;
+    PeriphClkInitStruct.Spi123ClockSelection = RCC_SPI123CLKSOURCE_PLL;
+    if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    /* SPI2 clock enable */
+    __HAL_RCC_SPI2_CLK_ENABLE();
+
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    /**SPI2 GPIO Configuration
+    PB15     ------> SPI2_MOSI
+    PB13     ------> SPI2_SCK
+    PB14     ------> SPI2_MISO
+    */
+    GPIO_InitStruct.Pin = GPIO_PIN_15|GPIO_PIN_13|GPIO_PIN_14;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  }
+}
+
+void HAL_SPI_MspDeInit(SPI_HandleTypeDef* spiHandle)
+{
+
+  if(spiHandle->Instance==SPI2)
+  {
+    /* Peripheral clock disable */
+    __HAL_RCC_SPI2_CLK_DISABLE();
+
+    /**SPI2 GPIO Configuration
+    PB15     ------> SPI2_MOSI
+    PB13     ------> SPI2_SCK
+    PB14     ------> SPI2_MISO
+    */
+    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_15|GPIO_PIN_13|GPIO_PIN_14);
+  }
+}
+
+
 int board_peripheral_init(void)
 {
     MPU_Config();
@@ -1105,6 +1222,7 @@ int board_peripheral_init(void)
     MX_LTDC_Init();
     MX_DMA2D_Init();
     dma2d_fill_color(FB_ADDR, 0x00, LCD_WIDTH, LCD_HEIGHT);//清屏
+    MX_SPI2_Init();
     return 0;
 }
 INIT_BOARD_EXPORT(board_peripheral_init);
