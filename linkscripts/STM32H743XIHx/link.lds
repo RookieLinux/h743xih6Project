@@ -2,13 +2,31 @@
  * linker script for STM32H743XIHx with GNU ld
  */
 
-/* Program Entry, set to mark it as "used" and avoid gc */
+/*
+ * STM32H743XI memory map.
+ *
+ * Normal code executes from FLASH. Performance-critical functions can be
+ * placed in .itcm_text. BSP startup must copy this section before first use.
+ * .data/.bss and the exception stack live in DTCM. The RT-Thread heap uses
+ * the unused part of AXI SRAM.
+ */
 MEMORY
 {
-ROM (rx) : ORIGIN =0x08000000,LENGTH =1024k
-RAM (rw) : ORIGIN =0x20000000,LENGTH =128k
-SDRAM(rwx) : ORIGIN =0xC0000000,LENGTH =32768k
-AXI_SRAM (rwx) : ORIGIN =0x24000000,LENGTH =512k
+    FLASH       (rx)  : ORIGIN = 0x08000000, LENGTH = 2048K
+    ITCM        (rx)  : ORIGIN = 0x00000000, LENGTH =   64K
+    DTCM        (rw)  : ORIGIN = 0x20000000, LENGTH =  128K
+    AXI_SRAM    (rwx) : ORIGIN = 0x24000000, LENGTH =  512K
+
+    SRAM1       (rwx) : ORIGIN = 0x30000000, LENGTH =  128K
+    SRAM2       (rwx) : ORIGIN = 0x30020000, LENGTH =  128K
+    SRAM3       (rwx) : ORIGIN = 0x30040000, LENGTH =   32K
+    SRAM4       (rwx) : ORIGIN = 0x38000000, LENGTH =   64K
+    BKPSRAM     (rw)  : ORIGIN = 0x38800000, LENGTH =    4K
+
+    /* RGB565 800 x 480: 0xBB800 bytes per framebuffer. */
+    SDRAM_FB0   (rw)  : ORIGIN = 0xC0000000, LENGTH = 0x000BB800
+    SDRAM_FB1   (rw)  : ORIGIN = 0xC00BB800, LENGTH = 0x000BB800
+    SDRAM       (rwx) : ORIGIN = 0xC0177000, LENGTH = 0x01E89000
 }
 ENTRY(Reset_Handler)
 _system_stack_size = 0x400;
@@ -29,6 +47,8 @@ SECTIONS
         *(.glue_7)
         *(.glue_7t)
         *(.gnu.linkonce.t*)
+        KEEP(*(.init))
+        KEEP(*(.fini))
 
         /* section information for finsh shell */
         . = ALIGN(4);
@@ -70,7 +90,7 @@ SECTIONS
         . = ALIGN(4);
 
         _etext = .;
-    } > ROM = 0
+    } > FLASH = 0
 
     /* .ARM.exidx is sorted, so has to go in its own output section.  */
     __exidx_start = .;
@@ -78,14 +98,24 @@ SECTIONS
     {
         *(.ARM.exidx* .gnu.linkonce.armexidx.*)
 
-        /* This is used by the startup in order to initialize the .data secion */
-        _sidata = .;
-    } > ROM
+    } > FLASH
     __exidx_end = .;
+
+    /* Optional ITCM code; requires BSP FLASH-to-ITCM relocation before use. */
+    .itcm_text :
+    {
+        . = ALIGN(32);
+        _sitcm = .;
+        *(.itcm_text)
+        *(.itcm_text.*)
+        . = ALIGN(32);
+        _eitcm = .;
+    } > ITCM AT > FLASH
+    _siitcm = LOADADDR(.itcm_text);
 
     /* .data section which is used for initialized data */
 
-    .data : AT (_sidata)
+    .data :
     {
         . = ALIGN(4);
         /* This is used by the startup in order to initialize the .data secion */
@@ -104,29 +134,19 @@ SECTIONS
         . = ALIGN(4);
         /* This is used by the startup in order to initialize the .data secion */
         _edata = . ;
-    } >RAM
+    } > DTCM AT > FLASH
+    _sidata = LOADADDR(.data);
 
-    .stack : 
+    .stack (NOLOAD) :
     {
         . = ALIGN(4);
         _sstack = .;
         . = . + _system_stack_size;
         . = ALIGN(4);
         _estack = .;
-    } >RAM
-    
-    .sdram (NOLOAD) :
-    {
-        . = ALIGN(4);
-        _ssdram = .;
-        *(.sdram*)
-        *(.sdram)
-        . = ALIGN(4);
-        _esdram = .;
-    } > SDRAM
-    
-    __bss_start = .;
-    .bss :
+    } > DTCM
+
+    .bss (NOLOAD) :
     {
         . = ALIGN(4);
         /* This is used by the startup in order to initialize the .bss secion */
@@ -139,24 +159,118 @@ SECTIONS
         . = ALIGN(4);
         /* This is used by the startup in order to initialize the .bss secion */
         _ebss = . ;
-        
-        *(.bss.init)
-    } > RAM
-    __bss_end = .;
+    } > DTCM
+    __bss_start = _sbss;
+    __bss_end = _ebss;
 	
-	.axi_sram (NOLOAD) :
+    .axi_sram (NOLOAD) :
     {
-        . = ALIGN(4);
+        . = ALIGN(32);
         __axi_sram_start = .;
         
         *(.axi_sram)        /* 匹配 C 代码中的 section 名 */
         *(.axi_sram.*)      /* 匹配所有子段 */
         
-        . = ALIGN(4);
+        . = ALIGN(32);
         __axi_sram_end = .;
     } > AXI_SRAM
-    
-    _end = .;
+
+    .heap (NOLOAD) :
+    {
+        . = ALIGN(8);
+        __heap_start = .;
+        . = ORIGIN(AXI_SRAM) + LENGTH(AXI_SRAM);
+        __heap_end = .;
+    } > AXI_SRAM
+
+    /* Optional NOLOAD sections for the remaining on-chip SRAM banks. */
+    .sram1 (NOLOAD) :
+    {
+        . = ALIGN(32);
+        __sram1_start = .;
+        *(.sram1)
+        *(.sram1.*)
+        . = ALIGN(32);
+        __sram1_end = .;
+    } > SRAM1
+
+    .sram2 (NOLOAD) :
+    {
+        . = ALIGN(32);
+        __sram2_start = .;
+        *(.sram2)
+        *(.sram2.*)
+        . = ALIGN(32);
+        __sram2_end = .;
+    } > SRAM2
+
+    .sram3 (NOLOAD) :
+    {
+        . = ALIGN(32);
+        __sram3_start = .;
+        *(.sram3)
+        *(.sram3.*)
+        . = ALIGN(32);
+        __sram3_end = .;
+    } > SRAM3
+
+    .sram4 (NOLOAD) :
+    {
+        . = ALIGN(32);
+        __sram4_start = .;
+        *(.sram4)
+        *(.sram4.*)
+        . = ALIGN(32);
+        __sram4_end = .;
+    } > SRAM4
+
+    .backup_sram (NOLOAD) :
+    {
+        . = ALIGN(4);
+        __backup_sram_start = .;
+        *(.backup_sram)
+        *(.backup_sram.*)
+        . = ALIGN(4);
+        __backup_sram_end = .;
+    } > BKPSRAM
+
+    /* Reserve both hard-coded LCD framebuffers in the linker map. */
+    .framebuffer0 (NOLOAD) :
+    {
+        __framebuffer0_start = .;
+        *(.framebuffer0)
+        *(.framebuffer0.*)
+        . = ORIGIN(SDRAM_FB0) + LENGTH(SDRAM_FB0);
+        __framebuffer0_end = .;
+    } > SDRAM_FB0
+
+    .framebuffer1 (NOLOAD) :
+    {
+        __framebuffer1_start = .;
+        *(.framebuffer1)
+        *(.framebuffer1.*)
+        . = ORIGIN(SDRAM_FB1) + LENGTH(SDRAM_FB1);
+        __framebuffer1_end = .;
+    } > SDRAM_FB1
+
+    /* General SDRAM begins after FB0 and FB1; my_buffer is placed here. */
+    .sdram (NOLOAD) :
+    {
+        . = ALIGN(32);
+        _ssdram = .;
+        *(.sdram)
+        *(.sdram.*)
+        . = ALIGN(32);
+        _esdram = .;
+    } > SDRAM
+
+    /* Conventional end symbols refer to the end of normal DTCM BSS. */
+    _end = __bss_end;
+    PROVIDE(end = _end);
+
+    ASSERT(_eitcm <= ORIGIN(ITCM) + LENGTH(ITCM), "ITCM code overflow")
+    ASSERT(__heap_start < __heap_end, "AXI SRAM has no room for RT-Thread heap")
+    ASSERT(_esdram <= ORIGIN(SDRAM) + LENGTH(SDRAM), "SDRAM data overflow")
 
     /* Stabs debugging sections.  */
     .stab          0 : { *(.stab) }

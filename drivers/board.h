@@ -33,9 +33,46 @@ extern "C"
 #define ROM_SIZE               (2 * 1024 * 1024)
 #define ROM_END                ((uint32_t)(ROM_START + ROM_SIZE))
 
-#define RAM_START              (0x20000000)
-#define RAM_SIZE               (128 * 1024)
-#define RAM_END                (RAM_START + RAM_SIZE)
+#define ITCM_START             ((uint32_t)0x00000000)
+#define ITCM_SIZE              (64 * 1024)
+#define ITCM_END               ((uint32_t)(ITCM_START + ITCM_SIZE))
+
+#define DTCM_START             ((uint32_t)0x20000000)
+#define DTCM_SIZE              (128 * 1024)
+#define DTCM_END               ((uint32_t)(DTCM_START + DTCM_SIZE))
+
+#define AXI_SRAM_START         ((uint32_t)0x24000000)
+#define AXI_SRAM_SIZE          (512 * 1024)
+#define AXI_SRAM_END           ((uint32_t)(AXI_SRAM_START + AXI_SRAM_SIZE))
+
+#define SRAM1_START            ((uint32_t)0x30000000)
+#define SRAM1_SIZE             (128 * 1024)
+#define SRAM1_END              ((uint32_t)(SRAM1_START + SRAM1_SIZE))
+
+#define SRAM2_START            ((uint32_t)0x30020000)
+#define SRAM2_SIZE             (128 * 1024)
+#define SRAM2_END              ((uint32_t)(SRAM2_START + SRAM2_SIZE))
+
+#define SRAM3_START            ((uint32_t)0x30040000)
+#define SRAM3_SIZE             (32 * 1024)
+#define SRAM3_END              ((uint32_t)(SRAM3_START + SRAM3_SIZE))
+
+#define SRAM4_START            ((uint32_t)0x38000000)
+#define SRAM4_SIZE             (64 * 1024)
+#define SRAM4_END              ((uint32_t)(SRAM4_START + SRAM4_SIZE))
+
+#define BACKUP_SRAM_START      ((uint32_t)0x38800000)
+#define BACKUP_SRAM_SIZE       (4 * 1024)
+#define BACKUP_SRAM_END        ((uint32_t)(BACKUP_SRAM_START + BACKUP_SRAM_SIZE))
+
+#define SDRAM_START            ((uint32_t)0xC0000000)
+#define SDRAM_SIZE             (32 * 1024 * 1024)
+#define SDRAM_END              ((uint32_t)(SDRAM_START + SDRAM_SIZE))
+
+/* Keep the legacy RAM macros as DTCM aliases for existing BSP code. */
+#define RAM_START              DTCM_START
+#define RAM_SIZE               DTCM_SIZE
+#define RAM_END                DTCM_END
 
 /*-------------------------- ROM/RAM CONFIG END --------------------------*/
 

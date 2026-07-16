@@ -3,6 +3,7 @@ set(FIRMWARE_INCLUDE_DIRS
     "${CMAKE_CURRENT_SOURCE_DIR}/"
     "${CMAKE_CURRENT_SOURCE_DIR}/applications"
     "${CMAKE_CURRENT_SOURCE_DIR}/applications/lvgl_port"
+    "${CMAKE_CURRENT_SOURCE_DIR}/applications/lv_wifi_weather/inc"
     "${CMAKE_CURRENT_SOURCE_DIR}/drivers"
     "${CMAKE_CURRENT_SOURCE_DIR}/drivers/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/drivers/include/config"

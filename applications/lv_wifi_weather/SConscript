@@ -1,0 +1,19 @@
+from building import *
+
+cwd = GetCurrentDir()
+src = Glob('src/*.c')
+
+if GetDepend('LVWW_USING_MOCK'):
+    src += Glob('ports/mock/*.c')
+    if GetDepend('LVWW_BUILD_DEMO'):
+        src += ['examples/lvww_demo.c']
+
+if GetDepend('LVWW_USING_RW007'):
+    src += Glob('ports/rw007/*.c')
+    if GetDepend('LVWW_BUILD_DEMO'):
+        src += ['examples/lvww_rw007_demo.c']
+
+CPPPATH = [cwd + '/inc']
+group = DefineGroup('lv_wifi_weather', src, depend=['PKG_USING_LV_WIFI_WEATHER'], CPPPATH=CPPPATH)
+
+Return('group')

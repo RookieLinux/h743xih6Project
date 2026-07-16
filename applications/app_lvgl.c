@@ -7,10 +7,11 @@
  * Date           Author       Notes
  * 2026-05-06     Rookie       the first version
  */
-#include "music/lv_demo_music.h"
+#include "lv_wifi_weather/inc/lvww_rw007_demo.h"
 
 void lv_user_gui_init() {
-    lv_demo_music();
+//    lv_demo_music();
+    lvww_rw007_demo_start(lv_scr_act());
 //    lv_demo_stress();
 //    lv_demo_benchmark();
 }

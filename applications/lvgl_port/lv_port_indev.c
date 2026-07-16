@@ -231,6 +231,10 @@ static void touchpad_read(lv_indev_drv_t * indev_drv, lv_indev_data_t * data)
 {
     static lv_coord_t last_x = 0;
     static lv_coord_t last_y = 0;
+    static lv_indev_state_t last_state = LV_INDEV_STATE_REL;
+
+    (void)indev_drv;
+    data->state = last_state;
 
     /*Save the pressed coordinates and the state*/
     rt_size_t read_num = rt_device_read(dev, 0, &touch_data, MAX_TOUCH_POINTS);
@@ -240,28 +244,33 @@ static void touchpad_read(lv_indev_drv_t * indev_drv, lv_indev_data_t * data)
         for (int i = 0; i < read_num; i++)
         {
             /* 解析触摸数据 */
-            if (touch_data[i].event == RT_TOUCH_EVENT_DOWN)
+            if (touch_data[i].event == RT_TOUCH_EVENT_DOWN ||
+                touch_data[i].event == RT_TOUCH_EVENT_MOVE)
             {
-                data->state = LV_INDEV_STATE_PR;
+                last_state = LV_INDEV_STATE_PR;
                 extern void touch_to_screen(struct rt_touch_data *raw, screen_point_t *point);
                 touch_to_screen(&touch_data[i], &screen_pos);
                 last_x = screen_pos.x;
                 last_y = screen_pos.y;
-                rt_kprintf("Touch: x=%d, y=%d, id=%d, event=%d, width=%d\n",
-                    screen_pos.x,
-                    screen_pos.y,
-                    touch_data[i].track_id,
-                    touch_data[i].event,
-                    touch_data[i].width);
+                if (touch_data[i].event == RT_TOUCH_EVENT_DOWN)
+                {
+                    rt_kprintf("Touch: x=%d, y=%d, id=%d, event=%d, width=%d\n",
+                        screen_pos.x,
+                        screen_pos.y,
+                        touch_data[i].track_id,
+                        touch_data[i].event,
+                        touch_data[i].width);
+                }
             }
             else if (touch_data[i].event == RT_TOUCH_EVENT_UP)
             {
-                data->state = LV_INDEV_STATE_REL;
+                last_state = LV_INDEV_STATE_REL;
                 rt_kprintf("Touch UP: id=%d\n", touch_data[i].track_id);
             }
         }
     }
     /*Set the last pressed coordinates*/
+    data->state = last_state;
     data->point.x = last_x;
     data->point.y = last_y;
 }

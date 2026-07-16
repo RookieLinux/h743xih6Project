@@ -62,6 +62,7 @@
 							<tool id="ilg.gnuarmeclipse.managedbuild.cross.tool.c.compiler.1570350559" name="GNU ARM Cross C Compiler" superClass="ilg.gnuarmeclipse.managedbuild.cross.tool.c.compiler">
 								<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="ilg.gnuarmeclipse.managedbuild.cross.option.c.compiler.include.paths.634882052" name="Include paths (-I)" superClass="ilg.gnuarmeclipse.managedbuild.cross.option.c.compiler.include.paths" useByScannerDiscovery="true" valueType="includePath">
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/applications//lvgl_port}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/applications/lv_wifi_weather/inc}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/.}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/drivers}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/drivers//include}&quot;"/>
@@ -257,6 +258,7 @@
 								</option>
 								<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="ilg.gnuarmeclipse.managedbuild.cross.option.cpp.compiler.include.paths.302877723" name="Include paths (-I)" superClass="ilg.gnuarmeclipse.managedbuild.cross.option.cpp.compiler.include.paths" useByScannerDiscovery="true" valueType="includePath">
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/applications//lvgl_port}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/applications/lv_wifi_weather/inc}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/.}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/drivers}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/drivers//include}&quot;"/>
@@ -446,6 +448,7 @@
 							<tool id="ilg.gnuarmeclipse.managedbuild.cross.tool.c.compiler.186596362" name="GNU ARM Cross C Compiler" superClass="ilg.gnuarmeclipse.managedbuild.cross.tool.c.compiler">
 								<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="ilg.gnuarmeclipse.managedbuild.cross.option.c.compiler.include.paths.1393422404" name="Include paths (-I)" superClass="ilg.gnuarmeclipse.managedbuild.cross.option.c.compiler.include.paths" useByScannerDiscovery="true" valueType="includePath">
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/applications//lvgl_port}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/applications/lv_wifi_weather/inc}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/.}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/drivers}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/drivers//include}&quot;"/>
@@ -641,6 +644,7 @@
 								</option>
 								<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="ilg.gnuarmeclipse.managedbuild.cross.option.cpp.compiler.include.paths.2120852453" name="Include paths (-I)" superClass="ilg.gnuarmeclipse.managedbuild.cross.option.cpp.compiler.include.paths" useByScannerDiscovery="true" valueType="includePath">
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/applications//lvgl_port}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/applications/lv_wifi_weather/inc}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/.}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/drivers}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc://${ProjName}/drivers//include}&quot;"/>
@@ -773,12 +777,6 @@
 	<storageModule moduleId="cdtBuildSystem" version="4.0.0">
 		<project id="qemu-vexpress-a9.ilg.gnuarmeclipse.managedbuild.cross.target.elf.860020518" name="Executable" projectType="ilg.gnuarmeclipse.managedbuild.cross.target.elf"/>
 	</storageModule>
-	<storageModule moduleId="scannerConfiguration">
-		<autodiscovery enabled="true" problemReportingEnabled="true" selectedProfileId=""/>
-		<scannerConfigBuildInfo instanceId="ilg.gnuarmeclipse.managedbuild.cross.config.elf.debug.553091094;ilg.gnuarmeclipse.managedbuild.cross.config.elf.debug.553091094.;ilg.gnuarmeclipse.managedbuild.cross.tool.c.compiler.1570350559;ilg.gnuarmeclipse.managedbuild.cross.tool.c.compiler.input.992053063">
-			<autodiscovery enabled="true" problemReportingEnabled="true" selectedProfileId=""/>
-		</scannerConfigBuildInfo>
-	</storageModule>
 	<storageModule moduleId="org.eclipse.cdt.core.LanguageSettingsProviders"/>
 	<storageModule moduleId="refreshScope" versionNumber="2">
 		<configuration configurationName="Debug">
@@ -790,5 +788,14 @@
 		<doc-comment-owner id="org.eclipse.cdt.ui.doxygen">
 			<path value=""/>
 		</doc-comment-owner>
+	</storageModule>
+	<storageModule moduleId="scannerConfiguration">
+		<autodiscovery enabled="true" problemReportingEnabled="true" selectedProfileId=""/>
+		<scannerConfigBuildInfo instanceId="ilg.gnuarmeclipse.managedbuild.cross.config.elf.debug.553091094;ilg.gnuarmeclipse.managedbuild.cross.config.elf.debug.553091094.;ilg.gnuarmeclipse.managedbuild.cross.tool.c.compiler.1570350559;ilg.gnuarmeclipse.managedbuild.cross.tool.c.compiler.input.992053063">
+			<autodiscovery enabled="true" problemReportingEnabled="true" selectedProfileId=""/>
+		</scannerConfigBuildInfo>
+		<scannerConfigBuildInfo instanceId="ilg.gnuarmeclipse.managedbuild.cross.config.elf.debug.553091094.1983429155;ilg.gnuarmeclipse.managedbuild.cross.config.elf.debug.553091094.1983429155.;ilg.gnuarmeclipse.managedbuild.cross.tool.c.compiler.186596362;ilg.gnuarmeclipse.managedbuild.cross.tool.c.compiler.input.1909966963">
+			<autodiscovery enabled="true" problemReportingEnabled="true" selectedProfileId=""/>
+		</scannerConfigBuildInfo>
 	</storageModule>
 </cproject>

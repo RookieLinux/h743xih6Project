@@ -43,15 +43,38 @@ void _Error_Handler(char *s, int num);
 #if defined(__CC_ARM) || defined(__CLANG_ARM)
 extern int Image$RW_IRAM1$ZI$Limit;
 #define HEAP_BEGIN      ((void *)&Image$RW_IRAM1$ZI$Limit)
+#define HEAP_END        STM32_SRAM1_END
 #elif __ICCARM__
 #pragma section="CSTACK"
 #define HEAP_BEGIN      (__segment_end("CSTACK"))
+#define HEAP_END        STM32_SRAM1_END
 #else
-extern int __bss_end;
-#define HEAP_BEGIN      ((void *)&__bss_end)
+extern unsigned char __heap_start;
+extern unsigned char __heap_end;
+#define HEAP_BEGIN      ((void *)&__heap_start)
+#define HEAP_END        ((void *)&__heap_end)
 #endif
 
-#define HEAP_END                       STM32_SRAM1_END
+/* GNU linker section helpers. NOLOAD data must be initialized by the user. */
+#if defined(__GNUC__)
+#define BSP_SECTION_ITCM_TEXT          __attribute__((section(".itcm_text")))
+#define BSP_SECTION_AXI_SRAM           __attribute__((section(".axi_sram")))
+#define BSP_SECTION_SRAM1              __attribute__((section(".sram1")))
+#define BSP_SECTION_SRAM2              __attribute__((section(".sram2")))
+#define BSP_SECTION_SRAM3              __attribute__((section(".sram3")))
+#define BSP_SECTION_SRAM4              __attribute__((section(".sram4")))
+#define BSP_SECTION_BACKUP_SRAM        __attribute__((section(".backup_sram")))
+#define BSP_SECTION_SDRAM              __attribute__((section(".sdram")))
+#else
+#define BSP_SECTION_ITCM_TEXT
+#define BSP_SECTION_AXI_SRAM
+#define BSP_SECTION_SRAM1
+#define BSP_SECTION_SRAM2
+#define BSP_SECTION_SRAM3
+#define BSP_SECTION_SRAM4
+#define BSP_SECTION_BACKUP_SRAM
+#define BSP_SECTION_SDRAM
+#endif
 #ifdef __cplusplus
 }
 #endif
