@@ -29,7 +29,7 @@ MEMORY
     SDRAM       (rwx) : ORIGIN = 0xC0177000, LENGTH = 0x01E89000
 }
 ENTRY(Reset_Handler)
-_system_stack_size = 0x400;
+_system_stack_size = 0x1000;
 
 SECTIONS
 {
