@@ -210,6 +210,24 @@ static lv_obj_t *lvww_button(lvww_ctx_t *ctx, lv_obj_t *parent, const char *text
     return button;
 }
 
+static void lvww_style_textarea(lvww_ctx_t *ctx, lv_obj_t *textarea)
+{
+    const lv_style_selector_t focused = LV_PART_MAIN | LV_STATE_FOCUSED;
+    const lv_style_selector_t cursor = LV_PART_CURSOR | LV_STATE_FOCUSED;
+
+    lv_obj_set_style_border_width(textarea, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(textarea, lv_color_hex(0x53617A), LV_PART_MAIN);
+    lv_obj_set_style_border_width(textarea, 3, focused);
+    lv_obj_set_style_border_color(textarea, ctx->cfg.accent_color, focused);
+    lv_obj_set_style_outline_width(textarea, 2, focused);
+    lv_obj_set_style_outline_pad(textarea, 2, focused);
+    lv_obj_set_style_outline_color(textarea, ctx->cfg.accent_color, focused);
+    lv_obj_set_style_outline_opa(textarea, LV_OPA_70, focused);
+    lv_obj_set_style_bg_color(textarea, lv_color_hex(0x182F50), focused);
+    lv_obj_set_style_bg_color(textarea, ctx->cfg.accent_color, cursor);
+    lv_obj_set_style_bg_opa(textarea, LV_OPA_COVER, cursor);
+}
+
 static void lvww_toast_hide_cb(lv_timer_t *timer)
 {
     lvww_ctx_t *ctx = (lvww_ctx_t *)timer->user_data;
@@ -483,8 +501,13 @@ static void lvww_refresh_home(lvww_ctx_t *ctx)
 
 static void lvww_hide_keyboard(lvww_ctx_t *ctx)
 {
+    lv_obj_t *textarea;
+
     if (!ctx || !ctx->keyboard)
         return;
+    textarea = lv_keyboard_get_textarea(ctx->keyboard);
+    if (textarea)
+        lv_obj_clear_state(textarea, LV_STATE_FOCUSED);
     lv_keyboard_set_textarea(ctx->keyboard, RT_NULL);
     lv_obj_add_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN);
     if (ctx->city_results)
@@ -493,12 +516,19 @@ static void lvww_hide_keyboard(lvww_ctx_t *ctx)
 
 static void lvww_show_keyboard(lvww_ctx_t *ctx, lv_obj_t *textarea)
 {
+    lv_obj_t *previous;
+
     if (!ctx || !ctx->keyboard || !textarea)
         return;
+    previous = lv_keyboard_get_textarea(ctx->keyboard);
+    if (previous && previous != textarea)
+        lv_obj_clear_state(previous, LV_STATE_FOCUSED);
     lv_keyboard_set_mode(ctx->keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
     lv_keyboard_set_textarea(ctx->keyboard, textarea);
+    lv_obj_add_state(textarea, LV_STATE_FOCUSED);
     lv_obj_clear_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(ctx->keyboard);
+    lv_obj_update_layout(ctx->keyboard);
     lv_obj_invalidate(ctx->keyboard);
     if (!ctx->editor && ctx->city_results)
         lv_obj_set_height(ctx->city_results, 88);
@@ -805,6 +835,7 @@ static void lvww_open_editor(lvww_ctx_t *ctx, const char *ssid, rt_bool_t secure
     lv_textarea_set_max_length(ctx->editor_ssid, LVWW_SSID_MAX_LEN);
     lv_textarea_set_text(ctx->editor_ssid, ssid ? ssid : "");
     lv_obj_set_style_text_font(ctx->editor_ssid, ctx->cfg.font_ui, 0);
+    lvww_style_textarea(ctx, ctx->editor_ssid);
     lv_obj_add_event_cb(ctx->editor_ssid, lvww_textarea_focus_cb, LV_EVENT_FOCUSED, ctx);
     lv_obj_add_event_cb(ctx->editor_ssid, lvww_textarea_focus_cb, LV_EVENT_CLICKED, ctx);
 
@@ -824,6 +855,7 @@ static void lvww_open_editor(lvww_ctx_t *ctx, const char *ssid, rt_bool_t secure
     lv_textarea_set_max_length(ctx->editor_password, LVWW_PASSWORD_MAX_LEN);
     lv_textarea_set_text(ctx->editor_password, password);
     lv_obj_set_style_text_font(ctx->editor_password, ctx->cfg.font_ui, 0);
+    lvww_style_textarea(ctx, ctx->editor_password);
     lv_obj_add_event_cb(ctx->editor_password, lvww_textarea_focus_cb, LV_EVENT_FOCUSED, ctx);
     lv_obj_add_event_cb(ctx->editor_password, lvww_textarea_focus_cb, LV_EVENT_CLICKED, ctx);
 
@@ -1355,6 +1387,7 @@ static void lvww_build_city(lvww_ctx_t *ctx)
     lv_textarea_set_max_length(ctx->city_input, 40);
     lv_textarea_set_placeholder_text(ctx->city_input, "输入 Beijing / Shanghai / 拼音");
     lv_obj_set_style_text_font(ctx->city_input, ctx->cfg.font_city, 0);
+    lvww_style_textarea(ctx, ctx->city_input);
     lv_obj_add_event_cb(ctx->city_input, lvww_textarea_focus_cb, LV_EVENT_FOCUSED, ctx);
     lv_obj_add_event_cb(ctx->city_input, lvww_textarea_focus_cb, LV_EVENT_CLICKED, ctx);
     lv_obj_add_event_cb(ctx->city_input, lvww_city_input_cb, LV_EVENT_VALUE_CHANGED, ctx);
@@ -1425,13 +1458,19 @@ static void lvww_build_ui(lvww_ctx_t *ctx, lv_obj_t *parent)
     }
 
     /*
-     * Keep the keyboard on LVGL's software top layer. It is still rendered
-     * into the same framebuffer/LTDC layer, but can never be covered by a
-     * page, navigation bar or the Wi-Fi editor overlay.
+     * Keep the keyboard in this component's object tree.  A keyboard on
+     * lv_layer_top() is owned by the display instead of this UI and can be
+     * missed by display/layer lifecycle changes.  lvww_show_keyboard() moves
+     * this floating child above the navigation bar and editor overlay every
+     * time it is shown.
      */
-    ctx->keyboard = lv_keyboard_create(lv_layer_top());
+    ctx->keyboard = lv_keyboard_create(ctx->root);
+    lv_obj_add_flag(ctx->keyboard, LV_OBJ_FLAG_FLOATING);
     lv_obj_set_size(ctx->keyboard, ctx->cfg.width, 205);
-    lv_obj_set_pos(ctx->keyboard, 0, ctx->cfg.height - 205);
+    /* lv_keyboard_create() uses bottom alignment by default.  Setting y to
+     * height - keyboard_height would therefore be applied as an additional
+     * alignment offset and place the keyboard below the screen. */
+    lv_obj_align(ctx->keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_color(ctx->keyboard, ctx->cfg.panel_color, 0);
     lv_obj_set_style_bg_opa(ctx->keyboard, LV_OPA_COVER, 0);
     lv_obj_set_style_text_font(ctx->keyboard, ctx->cfg.font_ui, 0);

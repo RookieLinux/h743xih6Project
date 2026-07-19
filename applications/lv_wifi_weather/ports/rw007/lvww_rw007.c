@@ -13,7 +13,10 @@
 #include <wlan_mgnt.h>
 
 #define LVWW_RW007_QUEUE_DEPTH       8
-#define LVWW_RW007_STACK_SIZE        6144
+/* DNS/SAL/newlib run synchronously in this worker.  A 6 KiB stack can
+ * underflow into the dynamically allocated rt_thread control block while
+ * resolving the first host after Wi-Fi comes online. */
+#define LVWW_RW007_STACK_SIZE        (12 * 1024)
 #define LVWW_RW007_SCAN_TIMEOUT_MS   12000
 #define LVWW_RW007_READY_TIMEOUT_MS  15000
 #define LVWW_RW007_SOCKET_TIMEOUT_MS 8000
