@@ -41,4 +41,4 @@
 - RT-Thread 4.1.1 真实头文件。
 - LVGL 官方 v8.3.11 真实头文件。
 - `LV_USE_USER_DATA=0`，确认组件不依赖对象 user data。
-- `LV_FONT_SIMSUN_16_CJK=1`、`LV_FONT_MONTSERRAT_48=1`，确认中文与大号字体配置可编译。
+- `LV_FONT_MONTSERRAT_48=1`，确认思源黑体中文子集与大号数字字体配置可编译。

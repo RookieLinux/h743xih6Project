@@ -9,6 +9,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from source_han_sans import acquire_source_han_sans
+
 
 def collect_characters(module_root: Path) -> list[str]:
     text = ""
@@ -18,7 +20,7 @@ def collect_characters(module_root: Path) -> list[str]:
                 continue
             text += path.read_text(encoding="utf-8")
     characters = set(re.findall(r"[\u2103\u3000-\u9fff\uff00-\uffef]", text))
-    # Keep Latin text, digits and punctuation on the same SimSun baseline as
+    # Keep Latin text, digits and punctuation on the same Source Han Sans baseline as
     # Chinese instead of mixing metrics from LV_FONT_DEFAULT.
     characters.update(chr(codepoint) for codepoint in range(0x20, 0x7F))
     return sorted(characters, key=ord)
@@ -27,10 +29,11 @@ def collect_characters(module_root: Path) -> list[str]:
 def render_glyph(font: ImageFont.FreeTypeFont, char: str, pixel_size: int) -> list[int]:
     image = Image.new("L", (pixel_size, pixel_size), 0)
     draw = ImageDraw.Draw(image)
-    # Keep every glyph on the font's shared baseline.  Cropping each glyph to
-    # its own bounding-box top makes low horizontal strokes such as "一" jump
-    # to the top of the line.
-    draw.text((0, 0), char, font=font, fill=255)
+    # Source Han Sans has a taller global ascender than the bitmap box. Keep
+    # every glyph on a shared baseline so it is not clipped, while low strokes
+    # such as "一" remain vertically centered.
+    baseline_y = pixel_size - max(3, pixel_size // 8)
+    draw.text((0, baseline_y), char, font=font, fill=255, anchor="ls")
 
     packed: list[int] = []
     for y in range(pixel_size):
@@ -241,11 +244,22 @@ def main() -> None:
     script_dir = Path(__file__).resolve().parent
     module_root = script_dir.parent
     parser = argparse.ArgumentParser()
-    parser.add_argument("--font", type=Path, default=Path(r"C:\Windows\Fonts\simsun.ttc"))
+    parser.add_argument(
+        "--font",
+        type=Path,
+        help="use a local font instead of downloading Source Han Sans SC",
+    )
+    parser.add_argument(
+        "--font-cache",
+        type=Path,
+        default=module_root / "tools" / ".cache" / "source-han-sans",
+        help="cache directory for the downloaded Adobe font",
+    )
     parser.add_argument("--output", type=Path,
                         default=module_root / "src" / "lvww_font_cjk_16.c")
     args = parser.parse_args()
-    generate(module_root, args.font, args.output)
+    font_path = args.font or acquire_source_han_sans(args.font_cache)
+    generate(module_root, font_path, args.output)
 
 
 if __name__ == "__main__":

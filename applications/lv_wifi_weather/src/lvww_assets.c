@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define DBG_TAG "lvww.assets"
@@ -21,6 +22,10 @@
 #define LVWW_SEEK_SET                0
 #define LVWW_SEEK_CUR                1
 #define LVWW_SEEK_END                2
+#define LVWW_CITY_DB_MAGIC           "#LVWW_CITY_DB_V1"
+#define LVWW_CITY_DB_LINE_SIZE       384u
+#define LVWW_CITY_DB_READ_SIZE       512u
+#define LVWW_CITY_DB_FIELD_COUNT     10u
 
 typedef struct
 {
@@ -47,6 +52,14 @@ static rt_bool_t file_font_loaded;
 static rt_bool_t file_font_prepared;
 static lv_fs_drv_t qspi_fs_drv;
 static rt_bool_t qspi_fs_registered;
+
+typedef struct
+{
+    int fd;
+    uint8_t buffer[LVWW_CITY_DB_READ_SIZE];
+    rt_size_t position;
+    rt_size_t length;
+} lvww_city_reader_t;
 
 static uint16_t read_u16_le(const uint8_t *p)
 {
@@ -80,6 +93,180 @@ static int read_exact_at(int fd, uint32_t offset, void *buffer, uint32_t length)
         done += (uint32_t)count;
     }
     return RT_EOK;
+}
+
+static int city_ascii_lower(int value)
+{
+    return value >= 'A' && value <= 'Z' ? value + ('a' - 'A') : value;
+}
+
+static rt_bool_t city_text_equal_ci(const char *left, const char *right)
+{
+    if (!left || !right)
+        return RT_FALSE;
+    while (*left && *right)
+    {
+        if (city_ascii_lower((unsigned char)*left) !=
+            city_ascii_lower((unsigned char)*right))
+            return RT_FALSE;
+        ++left;
+        ++right;
+    }
+    return *left == '\0' && *right == '\0';
+}
+
+static rt_bool_t city_text_starts_ci(const char *text, const char *query)
+{
+    if (!text || !query || !query[0])
+        return RT_FALSE;
+    while (*query)
+    {
+        if (!*text || city_ascii_lower((unsigned char)*text) !=
+                      city_ascii_lower((unsigned char)*query))
+            return RT_FALSE;
+        ++text;
+        ++query;
+    }
+    return RT_TRUE;
+}
+
+static rt_bool_t city_text_contains_ci(const char *text, const char *query)
+{
+    if (!text || !query || !query[0])
+        return RT_FALSE;
+    while (*text)
+    {
+        if (city_text_starts_ci(text, query))
+            return RT_TRUE;
+        ++text;
+    }
+    return RT_FALSE;
+}
+
+static int city_reader_getc(lvww_city_reader_t *reader)
+{
+    int count;
+    if (reader->position >= reader->length)
+    {
+        count = read(reader->fd, reader->buffer, sizeof(reader->buffer));
+        if (count <= 0)
+            return -1;
+        reader->position = 0;
+        reader->length = (rt_size_t)count;
+    }
+    return reader->buffer[reader->position++];
+}
+
+static int city_reader_line(lvww_city_reader_t *reader, char *line,
+                            rt_size_t capacity)
+{
+    rt_size_t used = 0;
+    rt_bool_t overflow = RT_FALSE;
+    int value;
+    while ((value = city_reader_getc(reader)) >= 0)
+    {
+        if (value == '\r')
+            continue;
+        if (value == '\n')
+            break;
+        if (used + 1u < capacity)
+            line[used++] = (char)value;
+        else
+            overflow = RT_TRUE;
+    }
+    if (value < 0 && used == 0)
+        return 0;
+    line[used] = '\0';
+    return overflow ? -RT_EFULL : (int)used;
+}
+
+static unsigned city_split_fields(char *line, char **fields, unsigned capacity)
+{
+    unsigned count = 0;
+    char *cursor = line;
+    if (!capacity)
+        return 0;
+    fields[count++] = cursor;
+    while (*cursor && count < capacity)
+    {
+        if (*cursor == '\t')
+        {
+            *cursor = '\0';
+            fields[count++] = cursor + 1;
+        }
+        ++cursor;
+    }
+    return count;
+}
+
+static void city_copy_text(char *destination, rt_size_t capacity,
+                           const char *source)
+{
+    if (!destination || !capacity)
+        return;
+    rt_strncpy(destination, source ? source : "", capacity - 1u);
+    destination[capacity - 1u] = '\0';
+}
+
+static rt_bool_t city_is_prefecture(const char *adcode)
+{
+    rt_size_t length = adcode ? rt_strlen(adcode) : 0;
+    return length == 6u && adcode[4] == '0' && adcode[5] == '0';
+}
+
+static int city_match_score(char **fields, const char *query)
+{
+    const char *name_en = fields[1];
+    const char *name_zh = fields[2];
+    const char *adm1_zh = fields[3];
+    const char *adm2_zh = fields[4];
+    int score = 0;
+
+    if (city_text_equal_ci(name_en, query) ||
+        city_text_equal_ci(name_zh, query))
+        score = 1000;
+    else if (city_text_starts_ci(name_en, query) ||
+             city_text_starts_ci(name_zh, query))
+        score = 700;
+    else if (city_text_contains_ci(name_en, query) ||
+             city_text_contains_ci(name_zh, query))
+        score = 450;
+    else if (city_text_contains_ci(adm2_zh, query))
+        score = 250;
+    else if (city_text_contains_ci(adm1_zh, query))
+        score = 150;
+    else
+        return 0;
+
+    if (city_is_prefecture(fields[9]))
+        score += 200;
+    if (name_zh[0] && city_text_starts_ci(adm2_zh, name_zh))
+        score += 120;
+    return score;
+}
+
+static void city_insert_result(lvww_city_t *cities, int *scores,
+                               rt_size_t capacity, rt_size_t *count,
+                               const lvww_city_t *city, int score)
+{
+    rt_size_t position = 0;
+    rt_size_t move_count;
+    while (position < *count && scores[position] >= score)
+        ++position;
+    if (position >= capacity)
+        return;
+    if (*count < capacity)
+        ++(*count);
+    move_count = *count - position - 1u;
+    if (move_count)
+    {
+        rt_memmove(cities + position + 1u, cities + position,
+                   move_count * sizeof(cities[0]));
+        rt_memmove(scores + position + 1u, scores + position,
+                   move_count * sizeof(scores[0]));
+    }
+    cities[position] = *city;
+    scores[position] = score;
 }
 
 static int find_codepoint(const lvww_file_font_t *state, uint32_t codepoint)
@@ -389,6 +576,7 @@ static void ensure_asset_directories(void)
     mkdir(LVWW_ASSET_FONT_DIR, 0777);
     mkdir(LVWW_ASSET_IMAGE_DIR, 0777);
     mkdir(LVWW_ASSET_TEXT_DIR, 0777);
+    mkdir(LVWW_ASSET_DATA_DIR, 0777);
 }
 
 int lvww_assets_reload(void)
@@ -417,6 +605,65 @@ const lv_font_t *lvww_assets_font(void)
 {
     file_font_prepare();
     return &file_font.font;
+}
+
+rt_size_t lvww_assets_city_search(const char *query,
+                                  lvww_city_t *cities,
+                                  rt_size_t capacity)
+{
+    lvww_city_reader_t reader;
+    lvww_city_t city;
+    char line[LVWW_CITY_DB_LINE_SIZE];
+    char *fields[LVWW_CITY_DB_FIELD_COUNT];
+    int scores[LVWW_MAX_CITY_RESULTS];
+    rt_size_t count = 0;
+    unsigned field_count;
+    int line_length;
+    int score;
+
+    if (!query || !query[0] || !cities || !capacity)
+        return 0;
+    if (capacity > LVWW_MAX_CITY_RESULTS)
+        capacity = LVWW_MAX_CITY_RESULTS;
+
+    rt_memset(&reader, 0, sizeof(reader));
+    reader.fd = open(LVWW_ASSET_CITY_DB_PATH, O_RDONLY, 0);
+    if (reader.fd < 0)
+        return 0;
+
+    line_length = city_reader_line(&reader, line, sizeof(line));
+    if (line_length <= 0 || rt_strcmp(line, LVWW_CITY_DB_MAGIC) != 0)
+    {
+        close(reader.fd);
+        return 0;
+    }
+
+    /* Skip the column-name line. */
+    city_reader_line(&reader, line, sizeof(line));
+    while ((line_length = city_reader_line(&reader, line, sizeof(line))) != 0)
+    {
+        if (line_length < 0)
+            continue;
+        field_count = city_split_fields(line, fields,
+                                        LVWW_CITY_DB_FIELD_COUNT);
+        if (field_count != LVWW_CITY_DB_FIELD_COUNT)
+            continue;
+        score = city_match_score(fields, query);
+        if (!score)
+            continue;
+
+        rt_memset(&city, 0, sizeof(city));
+        city_copy_text(city.id, sizeof(city.id), fields[0]);
+        city_copy_text(city.name, sizeof(city.name), fields[2]);
+        city_copy_text(city.admin, sizeof(city.admin), fields[3]);
+        city_copy_text(city.country, sizeof(city.country), fields[5]);
+        city_copy_text(city.timezone, sizeof(city.timezone), fields[6]);
+        city.latitude = strtod(fields[7], RT_NULL);
+        city.longitude = strtod(fields[8], RT_NULL);
+        city_insert_result(cities, scores, capacity, &count, &city, score);
+    }
+    close(reader.fd);
+    return count;
 }
 
 #ifdef RT_USING_FINSH

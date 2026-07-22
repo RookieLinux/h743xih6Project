@@ -1,4 +1,5 @@
 #include "lvww_rw007.h"
+#include "lvww_assets.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -24,7 +25,6 @@
 #define LVWW_RW007_KV_SLOTS          3
 #define LVWW_RW007_KV_SIZE           1536
 
-#define LVWW_GEOCODING_HOST "geocoding-api.open-meteo.com"
 #define LVWW_FORECAST_HOST  "api.open-meteo.com"
 
 typedef enum
@@ -535,159 +535,6 @@ static rt_bool_t json_array_item(const char *array, const char *end,
     return RT_FALSE;
 }
 
-static unsigned json_hex4(const char *text, rt_bool_t *valid)
-{
-    unsigned value = 0;
-    int i;
-    *valid = RT_FALSE;
-    for (i = 0; i < 4; ++i)
-    {
-        int digit = hex_value(text[i]);
-        if (digit < 0) return 0;
-        value = value * 16u + (unsigned)digit;
-    }
-    *valid = RT_TRUE;
-    return value;
-}
-
-static void json_put_bytes(char *output, rt_size_t capacity, rt_size_t *used,
-                           const unsigned char *bytes, unsigned count)
-{
-    if (*used + count >= capacity)
-    {
-        /* Mark the buffer full without ever writing half of a UTF-8 glyph. */
-        *used = capacity - 1u;
-        return;
-    }
-    rt_memcpy(output + *used, bytes, count);
-    *used += count;
-}
-
-static void json_put_utf8(char *output, rt_size_t capacity, rt_size_t *used,
-                          unsigned codepoint)
-{
-    unsigned char bytes[4];
-    unsigned count;
-    if (codepoint > 0x10FFFFu ||
-        (codepoint >= 0xD800u && codepoint <= 0xDFFFu))
-        codepoint = 0xFFFDu;
-    if (codepoint < 0x80u)
-    {
-        bytes[0] = (unsigned char)codepoint;
-        count = 1;
-    }
-    else if (codepoint < 0x800u)
-    {
-        bytes[0] = (unsigned char)(0xC0u | (codepoint >> 6));
-        bytes[1] = (unsigned char)(0x80u | (codepoint & 0x3Fu));
-        count = 2;
-    }
-    else if (codepoint < 0x10000u)
-    {
-        bytes[0] = (unsigned char)(0xE0u | (codepoint >> 12));
-        bytes[1] = (unsigned char)(0x80u | ((codepoint >> 6) & 0x3Fu));
-        bytes[2] = (unsigned char)(0x80u | (codepoint & 0x3Fu));
-        count = 3;
-    }
-    else
-    {
-        bytes[0] = (unsigned char)(0xF0u | (codepoint >> 18));
-        bytes[1] = (unsigned char)(0x80u | ((codepoint >> 12) & 0x3Fu));
-        bytes[2] = (unsigned char)(0x80u | ((codepoint >> 6) & 0x3Fu));
-        bytes[3] = (unsigned char)(0x80u | (codepoint & 0x3Fu));
-        count = 4;
-    }
-    json_put_bytes(output, capacity, used, bytes, count);
-}
-
-static rt_bool_t json_copy_string(const char *value, const char *end,
-                                  char *output, rt_size_t capacity)
-{
-    const char *cursor;
-    rt_size_t used = 0;
-    if (!value || value >= end || *value != '"' || capacity == 0)
-        return RT_FALSE;
-    cursor = value + 1;
-    while (cursor < end && *cursor != '"')
-    {
-        unsigned codepoint;
-        rt_bool_t valid;
-        char c = *cursor++;
-        if (c != '\\')
-        {
-            const unsigned char *sequence =
-                (const unsigned char *)(cursor - 1);
-            unsigned char lead = sequence[0];
-            unsigned count = 1;
-            unsigned i;
-            if ((lead & 0xE0u) == 0xC0u) count = 2;
-            else if ((lead & 0xF0u) == 0xE0u) count = 3;
-            else if ((lead & 0xF8u) == 0xF0u) count = 4;
-            else if (lead >= 0x80u) count = 0;
-            if (!count || cursor + count - 1u > end)
-            {
-                json_put_utf8(output, capacity, &used, 0xFFFDu);
-                continue;
-            }
-            for (i = 1; i < count; ++i)
-            {
-                if ((sequence[i] & 0xC0u) != 0x80u)
-                    break;
-            }
-            if (i != count)
-            {
-                json_put_utf8(output, capacity, &used, 0xFFFDu);
-                continue;
-            }
-            json_put_bytes(output, capacity, &used, sequence, count);
-            cursor += count - 1u;
-            continue;
-        }
-        if (cursor >= end) return RT_FALSE;
-        c = *cursor++;
-        if (c == 'u' && cursor + 4 <= end)
-        {
-            codepoint = json_hex4(cursor, &valid);
-            if (!valid) return RT_FALSE;
-            cursor += 4;
-            if (codepoint >= 0xD800u && codepoint <= 0xDBFFu &&
-                cursor + 6 <= end && cursor[0] == '\\' && cursor[1] == 'u')
-            {
-                unsigned low = json_hex4(cursor + 2, &valid);
-                if (valid && low >= 0xDC00u && low <= 0xDFFFu)
-                {
-                    codepoint = 0x10000u +
-                                ((codepoint - 0xD800u) << 10) +
-                                (low - 0xDC00u);
-                    cursor += 6;
-                }
-            }
-            json_put_utf8(output, capacity, &used, codepoint);
-        }
-        else
-        {
-            if (c == 'n') c = '\n';
-            else if (c == 'r') c = '\r';
-            else if (c == 't') c = '\t';
-            else if (c == 'b') c = '\b';
-            else if (c == 'f') c = '\f';
-            json_put_bytes(output, capacity, &used,
-                           (const unsigned char *)&c, 1);
-        }
-    }
-    output[used] = '\0';
-    return cursor < end && *cursor == '"';
-}
-
-static rt_bool_t json_member_string(const char *object, const char *end,
-                                    const char *key, char *output,
-                                    rt_size_t capacity)
-{
-    const char *value, *value_end;
-    return json_find_member(object, end, key, &value, &value_end) &&
-           json_copy_string(value, value_end, output, capacity);
-}
-
 static rt_bool_t json_member_number(const char *object, const char *end,
                                     const char *key, double *number)
 {
@@ -719,30 +566,6 @@ static rt_bool_t json_member_array_number(const char *object, const char *end,
     text[length] = '\0';
     *number = strtod(text, RT_NULL);
     return RT_TRUE;
-}
-
-static int url_encode(const char *input, char *output, rt_size_t capacity)
-{
-    static const char hex[] = "0123456789ABCDEF";
-    rt_size_t used = 0;
-    while (*input)
-    {
-        unsigned char c = (unsigned char)*input++;
-        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
-        {
-            if (used + 1u >= capacity) return -RT_EFULL;
-            output[used++] = (char)c;
-        }
-        else
-        {
-            if (used + 3u >= capacity) return -RT_EFULL;
-            output[used++] = '%';
-            output[used++] = hex[c >> 4];
-            output[used++] = hex[c & 0x0Fu];
-        }
-    }
-    output[used] = '\0';
-    return RT_EOK;
 }
 
 static lvww_weather_code_t map_weather_code(int code)
@@ -942,76 +765,18 @@ static void rw_do_disconnect(lvww_rw007_t *backend, const lvww_rw_cmd_t *cmd)
 
 static void rw_do_city(lvww_rw007_t *backend, const lvww_rw_cmd_t *cmd)
 {
-    char encoded[3 * (LVWW_CITY_NAME_MAX_LEN + 1)];
-    char path[256];
-    char *json = RT_NULL;
-    const char *json_end;
-    const char *results, *results_end;
     lvww_event_t event;
-    unsigned index;
+
     rt_memset(&event, 0, sizeof(event));
     event.type = LVWW_EVT_CITY_SEARCH_RESULT;
     event.data.city_search.count = (uint16_t)lvww_city_catalog_search(
         cmd->data.query, event.data.city_search.items, LVWW_MAX_CITY_RESULTS);
-    if (event.data.city_search.count)
+    if (!event.data.city_search.count)
     {
-        rw_post(backend, cmd, &event);
-        return;
+        event.data.city_search.count = (uint16_t)lvww_assets_city_search(
+            cmd->data.query, event.data.city_search.items,
+            LVWW_MAX_CITY_RESULTS);
     }
-    if (!rt_wlan_is_ready())
-    {
-        rw_post_error(backend, cmd, LVWW_OP_CITY_SEARCH, -RT_ERROR,
-                      "网络尚未就绪");
-        return;
-    }
-    if (url_encode(cmd->data.query, encoded, sizeof(encoded)) != RT_EOK)
-    {
-        rw_post_error(backend, cmd, LVWW_OP_CITY_SEARCH, -RT_EINVAL,
-                      "城市名称过长");
-        return;
-    }
-    rt_snprintf(path, sizeof(path),
-                "/v1/search?name=%s&count=%u&language=zh&format=json",
-                encoded, LVWW_MAX_CITY_RESULTS);
-    if (http_get_json(LVWW_GEOCODING_HOST, path, &json, RT_NULL) != RT_EOK)
-    {
-        rw_post_error(backend, cmd, LVWW_OP_CITY_SEARCH, -RT_ERROR,
-                      "城市服务请求失败");
-        return;
-    }
-    json_end = json + rt_strlen(json);
-    if (!json_find_member(json, json_end, "results", &results, &results_end) ||
-        *results != '[')
-    {
-        rt_free(json);
-        rw_post_error(backend, cmd, LVWW_OP_CITY_SEARCH, -RT_ERROR,
-                      "城市数据格式错误");
-        return;
-    }
-    for (index = 0; index < LVWW_MAX_CITY_RESULTS; ++index)
-    {
-        const char *item, *item_end;
-        lvww_city_t *city;
-        double number;
-        if (!json_array_item(results, results_end, index, &item, &item_end))
-            break;
-        city = &event.data.city_search.items[event.data.city_search.count];
-        if (!json_member_number(item, item_end, "id", &number) ||
-            !json_member_string(item, item_end, "name", city->name,
-                                sizeof(city->name)) ||
-            !json_member_number(item, item_end, "latitude", &city->latitude) ||
-            !json_member_number(item, item_end, "longitude", &city->longitude))
-            continue;
-        rt_snprintf(city->id, sizeof(city->id), "%.0f", number);
-        json_member_string(item, item_end, "admin1", city->admin,
-                           sizeof(city->admin));
-        json_member_string(item, item_end, "country", city->country,
-                           sizeof(city->country));
-        json_member_string(item, item_end, "timezone", city->timezone,
-                           sizeof(city->timezone));
-        ++event.data.city_search.count;
-    }
-    rt_free(json);
     rw_post(backend, cmd, &event);
 }
 

@@ -114,12 +114,12 @@ LVGL。每个结果必须带回原始请求 ID；`request_id == 0` 只用于 Wi-
 
 ### 城市与天气
 
-- `city_search()` 接收 ASCII 英文名或拼音，返回最多 8 个 `lvww_city_t`。
-- 城市名称应优先返回 Latin/拼音形式；若传入完整 CJK 字体，也可直接返回 UTF-8 中文名。
+- `city_search()` 接收 UTF-8 中文名、ASCII 英文名或拼音，返回最多 8 个 `lvww_city_t`。
+- 城市名称应优先返回 UTF-8 中文行政区名称，避免把拼音作为界面显示名。
 - `weather_fetch()` 返回标准化 `lvww_weather_t`，温度单位为摄氏度、风速为 km/h。
 - `utc_offset_seconds` 必须是观测时间对应的实际偏移，包含夏令时；组件不会修改系统全局时区。
-- 推荐后端使用 Open-Meteo Geocoding 搜索城市，并将 Forecast API 当前值、当日最高/最低
-  和 `utc_offset_seconds` 映射到结构体。核心不关心具体供应商，也不解析 JSON。
+- RW007 后端保留固件内置的默认城市；其他城市从 QSPI 文件系统中的本地中文城市库查询，
+  天气仍由 Open-Meteo Forecast API 获取。
 
 ### UTC 校时
 
@@ -135,17 +135,25 @@ LVGL。每个结果必须带回原始请求 ID；`request_id == 0` 只用于 Wi-
 
 ## 字体与 LVGL 配置
 
-中文固定文案优先使用 LVGL 8.3 自带的 `lv_font_simsun_16_cjk` 子集。建议在
-`lv_conf.h` 中启用：
+中文固定文案使用由 Adobe Source Han Sans SC Regular 生成的内置 4bpp 子集。大号温度
+数字仍使用 LVGL Montserrat，建议在 `lv_conf.h` 中启用：
 
 ```c
-#define LV_FONT_SIMSUN_16_CJK 1
 #define LV_FONT_MONTSERRAT_48 1
 ```
 
-如果未启用，组件仍可编译并回退到 `LV_FONT_DEFAULT`，但默认字体可能无法显示中文。
-也可通过 `lvww_config_t.font_ui/font_large/font_city` 注入项目自己的字体。任意中文城市名
+如果未启用 Montserrat 48，组件仍可编译并回退到 `LV_FONT_DEFAULT`；中文不依赖 LVGL
+内置中文字体。
+完整城市字库同样由 Source Han Sans SC Regular 生成并保存在 QSPI 文件系统中；生成脚本
+会从 `adobe-fonts/source-han-sans` 官方 GitHub Release 下载并校验字体源。也可通过
+`lvww_config_t.font_ui/font_large/font_city` 注入项目自己的字体。任意中文城市名
 通常需要更完整的 CJK 字库；默认模拟数据使用 Latin 名称以控制 Flash 占用。
+
+一键更新内置字体、QSPI 字库、城市库、资源清单和字体许可证：
+
+```text
+python applications/lv_wifi_weather/tools/generate_all_resources.py
+```
 
 建议同时确认：
 
