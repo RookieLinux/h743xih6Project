@@ -35,36 +35,36 @@ static int rt_spi_w25q64_init(void)
 }
 INIT_DEVICE_EXPORT(rt_spi_w25q64_init);
 
-//#define FS_PARTITION_NAME  "filesystem"
-//
-//static int fal_elmfat_init(void)
-//{
-//    struct fal_blk_device *blk_dev;
-//
-//    /* create block device */
-//    blk_dev = (struct fal_blk_device *)fal_blk_device_create(FS_PARTITION_NAME);
-//    if(blk_dev == RT_NULL)
-//        LOG_D("Can't create a block device on '%s' partition.", FS_PARTITION_NAME);
-//    else
-//        LOG_D("Create a block device on the %s partition of flash successful.", FS_PARTITION_NAME);
-//
-//    /* mount elmfat file system to FS_PARTITION_NAME */
-//    if(dfs_mount(FS_PARTITION_NAME, "/", "elm", 0, 0) == 0)
-//        LOG_D("elmfat filesystem mount success.");
-//    else {
-//        /* make a elmfat format filesystem */
-//        if(dfs_mkfs("elm", FS_PARTITION_NAME) == 0)
-//        {
-//            LOG_D("make elmfat filesystem success.");
-//            if(dfs_mount(FS_PARTITION_NAME, "/", "elm", 0, 0) == 0)
-//                LOG_D("elmfat filesystem mount success.");
-//        }
-//        else {
-//            return -RT_ERROR;
-//        }
-//    }
-//
-//    return RT_EOK;
-//}
-//INIT_COMPONENT_EXPORT(fal_elmfat_init);
+#define FS_PARTITION_NAME  "filesystem"
+
+static int fal_elmfat_init(void)
+{
+    struct fal_blk_device *blk_dev;
+
+    /* create block device */
+    blk_dev = (struct fal_blk_device *)fal_blk_device_create(FS_PARTITION_NAME);
+    if(blk_dev == RT_NULL)
+        LOG_D("Can't create a block device on '%s' partition.", FS_PARTITION_NAME);
+    else
+        LOG_D("Create a block device on the %s partition of flash successful.", FS_PARTITION_NAME);
+
+    /* mount elmfat file system to FS_PARTITION_NAME */
+    if(dfs_mount(FS_PARTITION_NAME, "/", "elm", 0, 0) == 0)
+        LOG_D("elmfat filesystem mount success.");
+    else {
+        /* make a elmfat format filesystem */
+        if(dfs_mkfs("elm", FS_PARTITION_NAME) == 0)
+        {
+            LOG_D("make elmfat filesystem success.");
+            if(dfs_mount(FS_PARTITION_NAME, "/", "elm", 0, 0) == 0)
+                LOG_D("elmfat filesystem mount success.");
+        }
+        else {
+            return -RT_ERROR;
+        }
+    }
+
+    return RT_EOK;
+}
+INIT_ENV_EXPORT(fal_elmfat_init);
 

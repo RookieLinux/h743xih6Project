@@ -22,16 +22,52 @@
 #define RT_WEAK rt_weak
 #endif
 
+void MPU_Config(void);
+
+#if defined(__GNUC__)
+extern rt_uint32_t _siitcm[];
+extern rt_uint32_t _sitcm[];
+extern rt_uint32_t _eitcm[];
+
+static void bsp_itcm_init(void)
+{
+    rt_uint32_t *src = _siitcm;
+    rt_uint32_t *dst = _sitcm;
+
+    /* Enable Cortex-M7 ITCM before copying executable code into it. */
+    SCB->ITCMCR |= SCB_ITCMCR_EN_Msk;
+    __DSB();
+    __ISB();
+
+    while (dst < _eitcm)
+    {
+        *dst++ = *src++;
+    }
+
+    /* Ensure all ITCM writes are visible before any relocated function runs. */
+    __DSB();
+    __ISB();
+}
+#endif
+
 RT_WEAK void rt_hw_board_init()
 {
     extern void hw_board_init(char *clock_src, int32_t clock_src_freq, int32_t clock_target_freq);
 
-    /* Heap initialization */
+#if defined(__GNUC__)
+    bsp_itcm_init();
+#endif
+
+    /* Configure memory attributes, then enable I/D-Cache inside MPU_Config(). */
+    MPU_Config();
+
+    /* Initialize HAL and configure the system clocks after MPU/cache setup. */
+    hw_board_init(BSP_CLOCK_SOURCE, BSP_CLOCK_SOURCE_FREQ_MHZ, BSP_CLOCK_SYSTEM_FREQ_MHZ);
+
+    /* Initialize the AXI SRAM heap only after MPU/cache configuration is stable. */
 #if defined(RT_USING_HEAP)
     rt_system_heap_init((void *) HEAP_BEGIN, (void *) HEAP_END);
 #endif
-
-    hw_board_init(BSP_CLOCK_SOURCE, BSP_CLOCK_SOURCE_FREQ_MHZ, BSP_CLOCK_SYSTEM_FREQ_MHZ);
 
     /* Set the shell console output device */
 #if defined(RT_USING_DEVICE) && defined(RT_USING_CONSOLE)
@@ -212,7 +248,7 @@ void MPU_Config(void)
 
   /* 配置AXI DRAM区域为Normal, 可缓存 */
   MPU_InitStruct.Enable = MPU_REGION_ENABLE;
-  MPU_InitStruct.Number = MPU_REGION_NUMBER0;
+  MPU_InitStruct.Number = MPU_REGION_NUMBER2;
   MPU_InitStruct.BaseAddress = 0x24000000;
   MPU_InitStruct.Size = MPU_REGION_SIZE_512KB;
   MPU_InitStruct.SubRegionDisable = 0;
@@ -227,6 +263,15 @@ void MPU_Config(void)
 
   /* Enables the MPU */
   HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
+
+  /* Enable caches only after every MPU region and the MPU itself are active. */
+#if defined(__ICACHE_PRESENT) && (__ICACHE_PRESENT == 1U)
+  SCB_EnableICache();
+#endif
+
+#if defined(__DCACHE_PRESENT) && (__DCACHE_PRESENT == 1U)
+  SCB_EnableDCache();
+#endif
 }
 
 void SystemClock_Config(void)
@@ -1214,9 +1259,6 @@ void HAL_SPI_MspDeInit(SPI_HandleTypeDef* spiHandle)
 
 int board_peripheral_init(void)
 {
-    MPU_Config();
-    SCB_EnableICache();
-    SCB_EnableDCache();
     MX_QUADSPI_Init();
     SDRAM_Init();
     MX_LTDC_Init();
@@ -1297,7 +1339,7 @@ MSH_CMD_EXPORT(test_sdram,Test sdram read and write commands);
 #endif
 
 #if 1
-uint8_t  my_buffer[1024 * 512] __attribute__((section(".axi_sram"))) __attribute__((aligned(32)));
+uint8_t  my_buffer[1024 * 512] __attribute__((section(".sdram"))) __attribute__((aligned(32)));
 void test_dma2d_copy(void)
 {
     memset((void*)(&my_buffer[0]), 0x0790, LCD_WIDTH * LCD_HEIGHT);

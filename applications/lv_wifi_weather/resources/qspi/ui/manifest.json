@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "encoding": "UTF-8 without BOM",
+  "lvgl_drive": "Q:",
+  "filesystem_root": "/ui",
+  "font": {
+    "path": "/ui/fonts/lvww_source_han_sans_sc_16_4bpp.fnt",
+    "format": "lvww-font-v1 little-endian",
+    "source": "SourceHanSansSC-Regular.otf",
+    "source_project": "adobe-fonts/source-han-sans",
+    "source_release": "2.005R",
+    "source_url": "https://github.com/adobe-fonts/source-han-sans/releases/download/2.005R/09_SourceHanSansSC.zip",
+    "source_archive_sha256": "ef7364f7ac2564be1ae9c1d74276de2653fe38b73449070398c4fc0b7e032ff1",
+    "source_font_sha256": "f1d8611151880c6c336aabeac4640ef434fa13cbfbf1ffe82d0a71b2a5637256",
+    "pixel_size": 16,
+    "bits_per_pixel": 4,
+    "glyph_count": 22071,
+    "glyph_cache_count": 8,
+    "sha256": "0d651149c13d79b3fb91995047918a5bdb980508702a9f63a03f2f928ed8b1a8",
+    "size_bytes": 2913410,
+    "license": {
+      "path": "/ui/fonts/LICENSE-SourceHanSans.txt",
+      "name": "SIL Open Font License 1.1",
+      "source": "https://github.com/adobe-fonts/source-han-sans/blob/2.005R/LICENSE.txt",
+      "sha256": "5fc29e390a451337c5f3a2acc90d0b7613f8182d2b932a122f362b8fa61bb763"
+    }
+  },
+  "text": {
+    "path": "/ui/text/common_chars_utf8.txt",
+    "encoding": "UTF-8 without BOM",
+    "sha256": "971e8362994f6688cae4418704aa324c8fc5ebb80c0fc2791097a4135aff3ebf"
+  },
+  "images": {
+    "path": "/ui/images",
+    "preferred_format": "LVGL 8 binary image (.bin)",
+    "lvgl_path_example": "Q:/ui/images/example.bin"
+  },
+  "city_database": {
+    "path": "/ui/data/cities_zh.tsv",
+    "format": "lvww-city-db-v1 tab-separated",
+    "encoding": "UTF-8 without BOM",
+    "source": "https://github.com/qwd/LocationList/blob/master/China-City-List-latest.csv",
+    "source_version": "China-City-List v202506200",
+    "source_sha256": "95bdaeef4f273feb03d706a066526c61b9e2aee599b1b79c1b54aafc2279b8be",
+    "record_count": 3577,
+    "sha256": "3ab66aea6585c8686e8c5f60de0f692650be747a102c94aac71c8e3662b24b7f",
+    "size_bytes": 342350
+  }
+}

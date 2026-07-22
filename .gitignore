@@ -38,3 +38,4 @@ DebugConfig/
 RTE/
 settings/
 *.uvguix*
+applications/lv_wifi_weather/tools/.cache/

@@ -2,7 +2,7 @@
 
 这是一个面向 STM32H743XIH6 的 RT-Thread 嵌入式工程，支持使用 RT-Thread Studio 或 CMake/CLion 进行开发和构建。
 
-工程目前完成了 800 × 480 RGB LCD、SDRAM 帧缓冲、LTDC、DMA2D、GT911 触摸、QSPI Flash、FAL/SFUD、FinSH 和 LVGL 的基础适配，并运行 LVGL Music Demo。
+工程目前完成了 800 × 480 RGB LCD、SDRAM 帧缓冲、LTDC、DMA2D、GT911 触摸、QSPI Flash、FAL/SFUD、FinSH 和 LVGL 的基础适配。默认应用为基于 RW007 的中文 Wi-Fi 天气界面，支持无线配置、本地城市搜索、Open-Meteo 天气请求、离线缓存以及 QSPI 流式中文字库。
 
 ## 硬件
 
@@ -14,7 +14,7 @@
 - DTCM RAM：128 KiB，起始地址 `0x20000000`
 - AXI SRAM：512 KiB，起始地址 `0x24000000`
 - 外部 SDRAM：32 MiB，起始地址 `0xC0000000`，32-bit FMC 总线
-- 显示：800 × 480(触摸范围1024 x 768)、RGB565、LTDC
+- 显示：800 × 480（触摸原始范围 1024 × 768）、RGB565、LTDC
 - 图形加速：DMA2D
 - 显示缓冲：SDRAM 双缓冲
   - Framebuffer 0：`0xC0000000`
@@ -47,7 +47,9 @@
 | Newlib | 已启用 | C 标准库 |
 | POSIX/Pthreads | 已启用 | POSIX 延时、时钟和线程接口 |
 | GT911 | 1.0.0 | 电容触摸驱动 |
+| RW007 | 2.1.0 | SPI Wi-Fi 模块及 WLAN 接入 |
 | rt_vsnprintf_full | latest | 完整格式化输出支持 |
+| Source Han Sans SC | 2.005R | 固件内置及 QSPI 中文字库源 |
 
 ## 当前功能
 
@@ -59,7 +61,13 @@
 - SDRAM 整帧双缓冲
 - DMA2D 填充和拷贝加速
 - LVGL 显示与输入设备端口
-- LVGL Music Demo
+- 中文 Wi-Fi 天气界面：首页、无线管理、城市与时区设置
+- RW007 无线扫描、账号保存、连接、断开与状态显示
+- Open-Meteo 天气数据和网络时间同步
+- 默认城市目录及 QSPI 本地中国城市库搜索
+- Source Han Sans SC 16 px、4bpp 抗锯齿中文字库
+- QSPI 字库按需读取及 8 字形缓存
+- 字库资源在线释放、替换和重新加载
 - GT911 五点触摸及坐标映射
 - QSPI W25Q64
 - SFUD/FAL Flash 设备
@@ -72,7 +80,8 @@
 ```text
 .
 ├── applications/                用户应用和 LVGL 端口
-│   └── lvgl_port/               显示、触摸输入适配
+│   ├── lvgl_port/               显示、触摸输入适配
+│   └── lv_wifi_weather/         天气 UI、RW007 后端及 QSPI 资源工具
 ├── drivers/                     STM32H743 BSP 和板级驱动
 ├── libraries/                   CMSIS 和 STM32H7 HAL
 ├── linkscripts/                 GNU ld 链接脚本
@@ -177,6 +186,62 @@ cmake --build --preset rt-studio-release
 
 为了尽量获得一致的二进制结果，Windows、Ubuntu 和 RT-Thread Studio 应使用相同版本的 GNU Arm Embedded 工具链。当前基准版本为 5.4.1。
 
+## 天气应用与 QSPI 资源
+
+天气应用位于 `applications/lv_wifi_weather/`。默认城市保存在固件中，其他中国城市从 QSPI FAT 文件系统的本地城市库搜索；城市搜索本身不依赖网络，获取天气和同步时间时才需要无线连接。
+
+运行时资源布局：
+
+```text
+/ui/fonts/lvww_source_han_sans_sc_16_4bpp.fnt
+/ui/fonts/LICENSE-SourceHanSans.txt
+/ui/data/cities_zh.tsv
+/ui/text/common_chars_utf8.txt
+/ui/images/
+/ui/manifest.json
+```
+
+- 中文字库源为 [Adobe Source Han Sans](https://github.com/adobe-fonts/source-han-sans) 的简体中文 Regular 字体，当前固定版本为 `2.005R`。
+- 城市数据源为 [QWeather LocationList](https://github.com/qwd/LocationList) 的 `China-City-List-latest.csv`，当前生成 3577 条地区记录。
+- 文本、城市库和清单统一使用无 BOM UTF-8；`.fnt` 为工程自定义的小端二进制格式，字形透明度为 4bpp。
+- 字体包下载地址及输入、输出文件的 SHA-256 均记录在 `manifest.json`。
+
+主机需要 Python 3 和 Pillow。首次运行会从 Adobe 官方 GitHub Release 下载约 90.8 MiB 的字体压缩包并校验哈希，之后复用 `tools/.cache/` 中的本地缓存。一键重新生成固件内置字体、QSPI 字库、城市库、许可证和资源清单：
+
+```powershell
+python applications/lv_wifi_weather/tools/generate_all_resources.py
+```
+
+生成后的 `applications/lv_wifi_weather/resources/qspi/ui/` 目录需要作为普通文件复制到板载 FAT 文件系统的 `/ui`，不能将 `.fnt` 直接烧写到裸 Flash 偏移。
+
+### 通过串口更新字库
+
+外部字体运行时按需读取，因此加载后文件会保持打开。替换前必须先释放资源：
+
+```text
+uires_unload
+rm /ui/fonts/lvww_source_han_sans_sc_16_4bpp.fnt
+ry
+mv /lvww_source_han_sans_sc_16_4bpp.fnt /ui/fonts/lvww_source_han_sans_sc_16_4bpp.fnt
+uires_reload
+```
+
+YMODEM 传输后请通过 `ls -l` 确认 `.fnt` 文件大小为 `2913410` 字节。当前 `filesystem` 分区为 5 MiB，旧、新两个完整字库无法同时保存；传输前应先删除旧字库，避免磁盘空间不足导致文件被静默截断。
+
+常用资源命令：
+
+| 命令 | 作用 |
+| --- | --- |
+| `uires_unload` | 回退到固件内置字体，关闭外部字库并释放索引内存 |
+| `uires_reload` | 校验并重新加载 `/ui/fonts/` 中的外部字库 |
+| `ls -l /ui/fonts` | 检查字库名称和文件大小 |
+| `df` | 检查 QSPI FAT 文件系统剩余空间 |
+
+更详细的组件接口和资源格式说明见：
+
+- `applications/lv_wifi_weather/README.md`
+- `applications/lv_wifi_weather/resources/README.md`
+
 ## Debug 与 Release
 
 | 配置 | 主要选项 | 调试信息 |
@@ -230,9 +295,10 @@ CMake 当前负责生成 ELF、BIN 和 MAP 文件，不直接执行烧录。
 - SDRAM、LTDC、DMA2D、GT911 和 QSPI 初始化主要位于 `drivers/board.c`。
 - CMake 链接脚本为 `linkscripts/STM32H743XIHx/link.lds`。
 - 当前链接脚本只分配了 1 MiB 内部 Flash，虽然 STM32H743XIH6 具有 2 MiB Flash；扩展程序空间前应同步检查 Flash 布局、FAL 分区和升级方案。
+- W25Q64 的 `filesystem` FAL 分区挂载到根目录 `/`，大小为 5 MiB，起始偏移为 `0x00300000`。
 - LVGL 使用两个完整的 800 × 480 RGB565 帧缓冲，每个缓冲区占用 768,000 字节。
 - 修改 `rtconfig.h`、启用新的 RT-Thread 组件或安装新软件包后，应同步检查 `cmake/components/` 中的组件目录和排除项。
 
 ## 许可证
 
-RT-Thread、LVGL、STM32 HAL/CMSIS 及各软件包分别遵循其自身目录中的许可证。新增或分发代码前请检查对应组件的许可证文件与版权声明。
+RT-Thread、LVGL、STM32 HAL/CMSIS 及各软件包分别遵循其自身目录中的许可证。Source Han Sans 使用 SIL Open Font License 1.1，许可证随 QSPI 字体资源保存在 `applications/lv_wifi_weather/resources/qspi/ui/fonts/LICENSE-SourceHanSans.txt`。新增或分发代码前请检查对应组件的许可证文件与版权声明。
