@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "encoding": "UTF-8 without BOM",
+  "lvgl_drive": "Q:",
+  "filesystem_root": "/ui",
+  "font": {
+    "path": "/ui/fonts/lvww_simsun_16_4bpp.fnt",
+    "format": "lvww-font-v1 little-endian",
+    "source": "simsun.ttc",
+    "pixel_size": 16,
+    "bits_per_pixel": 4,
+    "glyph_count": 22071,
+    "glyph_cache_count": 8,
+    "sha256": "6af17ec2a6fef9f3102dce8f693d9f2b8e6cb133cd2faf619916a343ae1a3793",
+    "size_bytes": 2913410
+  },
+  "text": {
+    "path": "/ui/text/common_chars_utf8.txt",
+    "encoding": "UTF-8 without BOM",
+    "sha256": "971e8362994f6688cae4418704aa324c8fc5ebb80c0fc2791097a4135aff3ebf"
+  },
+  "images": {
+    "path": "/ui/images",
+    "preferred_format": "LVGL 8 binary image (.bin)",
+    "lvgl_path_example": "Q:/ui/images/example.bin"
+  }
+}

@@ -1,4 +1,5 @@
 #include "lv_wifi_weather.h"
+#include "lvww_assets.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -54,13 +55,14 @@ struct lvww_ctx
 
     lv_obj_t *root;
     lv_obj_t *pages[3];
+    lv_obj_t *nav_buttons[3];
     lv_obj_t *home_city;
     lv_obj_t *home_clock;
     lv_obj_t *home_date;
     lv_obj_t *home_net;
     lv_obj_t *home_weather_icon;
-    lv_obj_t *home_weather_name;
     lv_obj_t *home_temperature;
+    lv_obj_t *home_temperature_unit;
     lv_obj_t *home_apparent;
     lv_obj_t *home_humidity;
     lv_obj_t *home_wind;
@@ -125,12 +127,92 @@ enum
     LVWW_PAGE_CITY
 };
 
+typedef struct
+{
+    lvww_city_t city;
+    const char *search_terms;
+} lvww_city_catalog_item_t;
+
+static const lvww_city_catalog_item_t lvww_city_catalog[] = {
+    {{"beijing", "北京", "北京市", "中国", "Asia/Shanghai", 39.9042, 116.4074},
+     "beijing 北京 北京市"},
+    {{"shanghai", "上海", "上海市", "中国", "Asia/Shanghai", 31.2304, 121.4737},
+     "shanghai 上海 上海市"},
+    {{"shenzhen", "深圳", "广东省", "中国", "Asia/Shanghai", 22.5431, 114.0579},
+     "shenzhen 深圳 广东 广东省"},
+    {{"guangzhou", "广州", "广东省", "中国", "Asia/Shanghai", 23.1291, 113.2644},
+     "guangzhou 广州 广东 广东省"},
+    {{"chengdu", "成都", "四川省", "中国", "Asia/Shanghai", 30.5728, 104.0668},
+     "chengdu 成都 四川 四川省"},
+    {{"hangzhou", "杭州", "浙江省", "中国", "Asia/Shanghai", 30.2741, 120.1551},
+     "hangzhou 杭州 浙江 浙江省"},
+    {{"wuhan", "武汉", "湖北省", "中国", "Asia/Shanghai", 30.5928, 114.3055},
+     "wuhan 武汉 湖北 湖北省"},
+    {{"xian", "西安", "陕西省", "中国", "Asia/Shanghai", 34.3416, 108.9398},
+     "xian xi'an 西安 陕西 陕西省"}
+};
+
 static void lvww_refresh_home(lvww_ctx_t *ctx);
 static void lvww_refresh_wifi(lvww_ctx_t *ctx);
 static void lvww_request_scan(lvww_ctx_t *ctx);
 static void lvww_request_weather(lvww_ctx_t *ctx);
 static void lvww_request_time(lvww_ctx_t *ctx);
 static void lvww_close_editor(lvww_ctx_t *ctx);
+
+static int lvww_ascii_lower(int c)
+{
+    return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
+}
+
+static rt_bool_t lvww_text_contains_ci(const char *text, const char *query)
+{
+    rt_size_t text_len;
+    rt_size_t query_len;
+    rt_size_t i;
+    rt_size_t j;
+
+    if (!text || !query)
+        return RT_FALSE;
+    query_len = rt_strlen(query);
+    if (!query_len)
+        return RT_TRUE;
+    text_len = rt_strlen(text);
+    if (query_len > text_len)
+        return RT_FALSE;
+    for (i = 0; i + query_len <= text_len; ++i)
+    {
+        for (j = 0; j < query_len; ++j)
+        {
+            if (lvww_ascii_lower((unsigned char)text[i + j]) !=
+                lvww_ascii_lower((unsigned char)query[j]))
+                break;
+        }
+        if (j == query_len)
+            return RT_TRUE;
+    }
+    return RT_FALSE;
+}
+
+rt_size_t lvww_city_catalog_search(const char *query,
+                                   lvww_city_t *cities,
+                                   rt_size_t capacity)
+{
+    rt_size_t i;
+    rt_size_t count = 0;
+
+    if (!cities || !capacity)
+        return 0;
+    if (!query)
+        query = "";
+    for (i = 0; i < sizeof(lvww_city_catalog) / sizeof(lvww_city_catalog[0]) &&
+                count < capacity; ++i)
+    {
+        if (!query[0] ||
+            lvww_text_contains_ci(lvww_city_catalog[i].search_terms, query))
+            cities[count++] = lvww_city_catalog[i].city;
+    }
+    return count;
+}
 
 static void lvww_secure_zero(void *data, rt_size_t length)
 {
@@ -217,6 +299,8 @@ static void lvww_style_textarea(lvww_ctx_t *ctx, lv_obj_t *textarea)
 
     lv_obj_set_style_border_width(textarea, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(textarea, lv_color_hex(0x53617A), LV_PART_MAIN);
+    lv_obj_set_style_text_color(textarea, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(textarea, lv_color_white(), focused);
     lv_obj_set_style_border_width(textarea, 3, focused);
     lv_obj_set_style_border_color(textarea, ctx->cfg.accent_color, focused);
     lv_obj_set_style_outline_width(textarea, 2, focused);
@@ -296,6 +380,7 @@ static void lvww_load_store(lvww_ctx_t *ctx)
 {
     rt_size_t length;
     uint32_t crc;
+    lvww_city_t normalized_city;
 
     rt_memset(&ctx->profile_store, 0, sizeof(ctx->profile_store));
     ctx->profile_store.last_success = LVWW_INVALID_INDEX;
@@ -338,31 +423,28 @@ static void lvww_load_store(lvww_ctx_t *ctx)
         ctx->cache_store.city = ctx->cfg.default_city;
         ctx->cache_store.city_valid = ctx->cfg.default_city.id[0] != '\0';
     }
-}
-
-static const char *lvww_weather_name(lvww_weather_code_t code)
-{
-    static const char *names[] = {
-        "晴", "多云间晴", "多云", "有雾", "毛毛雨",
-        "有雨", "有雪", "雷暴", "未知"
-    };
-    if ((unsigned)code >= sizeof(names) / sizeof(names[0]))
-        code = LVWW_WEATHER_UNKNOWN;
-    return names[code];
+    else if (ctx->cache_store.city_valid &&
+             lvww_city_catalog_search(ctx->cache_store.city.id,
+                                      &normalized_city, 1) == 1 &&
+             rt_strcmp(normalized_city.id, ctx->cache_store.city.id) == 0)
+    {
+        /* Migrate old English display names without discarding weather data. */
+        ctx->cache_store.city = normalized_city;
+    }
 }
 
 static const char *lvww_weather_icon(lvww_weather_code_t code)
 {
     switch (code)
     {
-    case LVWW_WEATHER_CLEAR: return "SUN";
-    case LVWW_WEATHER_PARTLY_CLOUDY: return "SUN/CLOUD";
-    case LVWW_WEATHER_CLOUDY: return "CLOUD";
-    case LVWW_WEATHER_FOG: return "FOG";
-    case LVWW_WEATHER_DRIZZLE: return "DRIZZLE";
-    case LVWW_WEATHER_RAIN: return "RAIN";
-    case LVWW_WEATHER_SNOW: return "SNOW";
-    case LVWW_WEATHER_STORM: return "STORM";
+    case LVWW_WEATHER_CLEAR: return "晴";
+    case LVWW_WEATHER_PARTLY_CLOUDY: return "晴间云";
+    case LVWW_WEATHER_CLOUDY: return "多云";
+    case LVWW_WEATHER_FOG: return "雾";
+    case LVWW_WEATHER_DRIZZLE: return "毛毛雨";
+    case LVWW_WEATHER_RAIN: return "有雨";
+    case LVWW_WEATHER_SNOW: return "有雪";
+    case LVWW_WEATHER_STORM: return "雷暴";
     default: return "--";
     }
 }
@@ -446,37 +528,39 @@ static void lvww_refresh_home(lvww_ctx_t *ctx)
     lv_label_set_text(ctx->home_city, city);
     if (ctx->wifi_state == LVWW_WIFI_ONLINE)
     {
-        lv_label_set_text_fmt(ctx->home_net, "Wi-Fi 在线  %s", ctx->connected_ssid);
+        lv_label_set_text(ctx->home_net, "无线在线");
         lv_obj_set_style_text_color(ctx->home_net, lv_color_hex(0x55D6A9), 0);
     }
     else if (ctx->wifi_state == LVWW_WIFI_CONNECTING)
     {
-        lv_label_set_text(ctx->home_net, "Wi-Fi 连接中...");
+        lv_label_set_text(ctx->home_net, "无线连接中...");
         lv_obj_set_style_text_color(ctx->home_net, lv_color_hex(0xF2C66D), 0);
     }
     else
     {
-        lv_label_set_text(ctx->home_net, "Wi-Fi 离线");
+        lv_label_set_text(ctx->home_net, "无线离线");
         lv_obj_set_style_text_color(ctx->home_net, lv_color_hex(0xF07B88), 0);
     }
 
     if (!ctx->cache_store.weather_valid)
     {
+        lv_obj_set_style_text_font(ctx->home_weather_icon,
+                                   ctx->cfg.font_large, 0);
         lv_label_set_text(ctx->home_weather_icon, "--");
-        lv_label_set_text(ctx->home_weather_name, "暂无天气");
-        lv_label_set_text(ctx->home_temperature, "--.- C");
-        lv_label_set_text(ctx->home_apparent, "体感 --.- C");
+        lv_label_set_text(ctx->home_temperature, "--.-");
+        lv_label_set_text(ctx->home_apparent, "体感 --.-℃");
         lv_label_set_text(ctx->home_humidity, "湿度 -- %");
         lv_label_set_text(ctx->home_wind, "风速 -- km/h");
-        lv_label_set_text(ctx->home_range, "今日 -- / -- C");
+        lv_label_set_text(ctx->home_range, "今日 -- / --℃");
         lv_label_set_text(ctx->home_updated, "联网后自动刷新");
     }
     else
     {
+        lv_obj_set_style_text_font(ctx->home_weather_icon,
+                                   &lvww_font_cjk_32, 0);
         lv_label_set_text(ctx->home_weather_icon, lvww_weather_icon(w->code));
-        lv_label_set_text(ctx->home_weather_name, lvww_weather_name(w->code));
-        lvww_set_decimal_label(ctx->home_temperature, "", w->temperature_c, " C");
-        lvww_set_decimal_label(ctx->home_apparent, "体感 ", w->apparent_c, " C");
+        lvww_set_decimal_label(ctx->home_temperature, "", w->temperature_c, "");
+        lvww_set_decimal_label(ctx->home_apparent, "体感 ", w->apparent_c, "℃");
         lv_label_set_text_fmt(ctx->home_humidity, "湿度 %u %%",
                               (unsigned)(w->humidity_percent + 0.5f));
         lvww_set_decimal_label(ctx->home_wind, "风速 ", w->wind_kph, " km/h");
@@ -488,7 +572,7 @@ static void lvww_refresh_home(lvww_ctx_t *ctx)
             rt_snprintf(high, sizeof(high), "%s%u.%u", hi < 0 ? "-" : "",
                         (unsigned)(hi < 0 ? -hi : hi) / 10u,
                         (unsigned)(hi < 0 ? -hi : hi) % 10u);
-            rt_snprintf(range, sizeof(range), "今日 %s / %s%u.%u C", high,
+            rt_snprintf(range, sizeof(range), "今日 %s / %s%u.%u℃", high,
                         lo < 0 ? "-" : "", (unsigned)(lo < 0 ? -lo : lo) / 10u,
                         (unsigned)(lo < 0 ? -lo : lo) % 10u);
             lv_label_set_text(ctx->home_range, range);
@@ -496,6 +580,9 @@ static void lvww_refresh_home(lvww_ctx_t *ctx)
         lv_label_set_text(ctx->home_updated,
                           ctx->wifi_state == LVWW_WIFI_ONLINE ? "天气已更新" : "离线缓存");
     }
+    lv_obj_update_layout(ctx->home_temperature);
+    lv_obj_align_to(ctx->home_temperature_unit, ctx->home_temperature,
+                    LV_ALIGN_OUT_RIGHT_TOP, 4, 4);
     lvww_refresh_clock(ctx);
 }
 
@@ -517,6 +604,8 @@ static void lvww_hide_keyboard(lvww_ctx_t *ctx)
 static void lvww_show_keyboard(lvww_ctx_t *ctx, lv_obj_t *textarea)
 {
     lv_obj_t *previous;
+    lv_coord_t keyboard_top;
+    lv_coord_t results_height;
 
     if (!ctx || !ctx->keyboard || !textarea)
         return;
@@ -531,7 +620,17 @@ static void lvww_show_keyboard(lvww_ctx_t *ctx, lv_obj_t *textarea)
     lv_obj_update_layout(ctx->keyboard);
     lv_obj_invalidate(ctx->keyboard);
     if (!ctx->editor && ctx->city_results)
-        lv_obj_set_height(ctx->city_results, 88);
+    {
+        /* Fill all space above the keyboard.  The previous fixed 88 px
+         * height left a large empty strip and exposed only one city row. */
+        keyboard_top = (lv_coord_t)ctx->cfg.height -
+                       lv_obj_get_height(ctx->keyboard);
+        results_height = keyboard_top - lv_obj_get_y(ctx->city_results) - 8;
+        if (results_height < 62)
+            results_height = 62;
+        lv_obj_set_height(ctx->city_results, results_height);
+        lv_obj_scroll_to_y(ctx->city_results, 0, LV_ANIM_OFF);
+    }
 }
 
 static void lvww_keyboard_event_cb(lv_event_t *event)
@@ -550,6 +649,35 @@ static void lvww_textarea_focus_cb(lv_event_t *event)
         lvww_show_keyboard(ctx, lv_event_get_target(event));
 }
 
+static void lvww_refresh_nav(lvww_ctx_t *ctx, int page)
+{
+    int i;
+
+    for (i = 0; i < 3; ++i)
+    {
+        lv_obj_t *button = ctx->nav_buttons[i];
+        lv_obj_t *label;
+        rt_bool_t active;
+
+        if (!button)
+            continue;
+        active = i == page;
+        lv_obj_set_style_bg_color(button,
+                                  active ? lv_color_hex(0x1C3D68) :
+                                           lv_color_hex(0x182338), 0);
+        lv_obj_set_style_border_width(button, active ? 3 : 2, 0);
+        lv_obj_set_style_border_color(button,
+                                      active ? ctx->cfg.accent_color :
+                                               lv_color_hex(0x34445F), 0);
+        lv_obj_set_style_radius(button, 14, 0);
+        label = lv_obj_get_child(button, 0);
+        if (label)
+            lv_obj_set_style_text_color(label,
+                                        active ? lv_color_white() :
+                                                 lv_color_hex(0xAEB8CC), 0);
+    }
+}
+
 static void lvww_show_page(lvww_ctx_t *ctx, int page)
 {
     int i;
@@ -560,6 +688,7 @@ static void lvww_show_page(lvww_ctx_t *ctx, int page)
         else
             lv_obj_add_flag(ctx->pages[i], LV_OBJ_FLAG_HIDDEN);
     }
+    lvww_refresh_nav(ctx, page);
     if (page == LVWW_PAGE_CITY && !ctx->editor)
         lvww_show_keyboard(ctx, ctx->city_input);
     else if (!ctx->editor)
@@ -817,7 +946,7 @@ static void lvww_open_editor(lvww_ctx_t *ctx, const char *ssid, rt_bool_t secure
     lv_obj_set_pos(panel, 20, 8);
 
     lv_obj_t *title = lvww_label(ctx, panel,
-                                 saved_index >= 0 ? "编辑 Wi-Fi 账号" : "添加 Wi-Fi 账号",
+                                 saved_index >= 0 ? "编辑 Wi-Fi 账号" : "添加无线账号",
                                  ctx->cfg.font_ui, lv_color_white());
     lv_obj_set_pos(title, 8, 2);
 
@@ -1047,7 +1176,7 @@ static void lvww_refresh_city_results(lvww_ctx_t *ctx)
         lv_obj_t *name = lvww_label(ctx, row, ctx->city_candidates[i].name,
                                     ctx->cfg.font_city, lv_color_white());
         lv_obj_set_pos(name, 4, 0);
-        lv_obj_t *detail = lvww_label(ctx, row, "", ctx->cfg.font_ui,
+        lv_obj_t *detail = lvww_label(ctx, row, "", ctx->cfg.font_city,
                                       lv_color_hex(0xAEB8CC));
         lv_label_set_text_fmt(detail, "%s  %s", ctx->city_candidates[i].admin,
                               ctx->city_candidates[i].country);
@@ -1090,12 +1219,13 @@ static void lvww_city_input_cb(lv_event_t *event)
     {
         if (rt_strlen(lv_textarea_get_text(ctx->city_input)) < 2)
         {
-            ctx->city_count = 0;
-            lv_obj_clean(ctx->city_results);
-            lv_obj_t *hint = lvww_label(ctx, ctx->city_results,
-                                        "请输入至少 2 个英文或拼音字符",
-                                        ctx->cfg.font_ui, lv_color_hex(0xAEB8CC));
-            lv_obj_center(hint);
+            if (ctx->city_request_id && ctx->ops.cancel)
+                ctx->ops.cancel(ctx->user_ctx, LVWW_OP_CITY_SEARCH,
+                                ctx->city_request_id);
+            ctx->city_request_id = 0;
+            ctx->city_count = (uint16_t)lvww_city_catalog_search(
+                "", ctx->city_candidates, ctx->cfg.max_city_results);
+            lvww_refresh_city_results(ctx);
             lv_timer_pause(ctx->search_timer);
         }
         else
@@ -1300,21 +1430,21 @@ static void lvww_build_home(lvww_ctx_t *ctx)
 
     ctx->home_weather_icon = lvww_label(ctx, weather, "--", ctx->cfg.font_large,
                                         ctx->cfg.accent_color);
-    lv_obj_set_pos(ctx->home_weather_icon, 18, 24);
-    ctx->home_temperature = lvww_label(ctx, weather, "--.- C", ctx->cfg.font_large,
+    lv_obj_set_pos(ctx->home_weather_icon, 18, 30);
+    ctx->home_temperature = lvww_label(ctx, weather, "--.-", ctx->cfg.font_large,
                                        lv_color_white());
     lv_obj_set_pos(ctx->home_temperature, 178, 18);
-    ctx->home_weather_name = lvww_label(ctx, weather, "暂无天气", ctx->cfg.font_ui,
-                                        lv_color_hex(0xC7D0E3));
-    lv_obj_set_pos(ctx->home_weather_name, 180, 82);
-
-    ctx->home_apparent = lvww_label(ctx, weather, "体感 --.- C", ctx->cfg.font_ui,
+    ctx->home_temperature_unit = lvww_label(ctx, weather, "℃", &lvww_font_cjk_32,
+                                            lv_color_white());
+    lv_obj_align_to(ctx->home_temperature_unit, ctx->home_temperature,
+                    LV_ALIGN_OUT_RIGHT_TOP, 4, 4);
+    ctx->home_apparent = lvww_label(ctx, weather, "体感 --.-℃", ctx->cfg.font_ui,
                                     lv_color_white());
     ctx->home_humidity = lvww_label(ctx, weather, "湿度 -- %", ctx->cfg.font_ui,
                                     lv_color_white());
     ctx->home_wind = lvww_label(ctx, weather, "风速 -- km/h", ctx->cfg.font_ui,
                                 lv_color_white());
-    ctx->home_range = lvww_label(ctx, weather, "今日 -- / -- C", ctx->cfg.font_ui,
+    ctx->home_range = lvww_label(ctx, weather, "今日 -- / --℃", ctx->cfg.font_ui,
                                  lv_color_white());
     lv_obj_set_pos(ctx->home_apparent, 22, 150);
     lv_obj_set_pos(ctx->home_humidity, 238, 150);
@@ -1335,10 +1465,10 @@ static void lvww_build_home(lvww_ctx_t *ctx)
     ctx->home_clock = lvww_label(ctx, info, "--:--", ctx->cfg.font_large,
                                  lv_color_white());
     lv_obj_align(ctx->home_clock, LV_ALIGN_TOP_MID, 0, 70);
-    ctx->home_date = lvww_label(ctx, info, "等待网络校时", ctx->cfg.font_ui,
+    ctx->home_date = lvww_label(ctx, info, "等待网络校时", &lvww_font_cjk_16,
                                 lv_color_hex(0xAEB8CC));
     lv_obj_align(ctx->home_date, LV_ALIGN_TOP_MID, 0, 140);
-    ctx->home_net = lvww_label(ctx, info, "Wi-Fi 离线", ctx->cfg.font_ui,
+    ctx->home_net = lvww_label(ctx, info, "无线离线", ctx->cfg.font_ui,
                                lv_color_hex(0xF07B88));
     lv_obj_align(ctx->home_net, LV_ALIGN_BOTTOM_MID, 0, -28);
 }
@@ -1346,7 +1476,7 @@ static void lvww_build_home(lvww_ctx_t *ctx)
 static void lvww_build_wifi(lvww_ctx_t *ctx)
 {
     lv_obj_t *page = ctx->pages[LVWW_PAGE_WIFI];
-    lv_obj_t *title = lvww_label(ctx, page, "Wi-Fi 账号管理", ctx->cfg.font_ui,
+    lv_obj_t *title = lvww_label(ctx, page, "无线网络管理", ctx->cfg.font_ui,
                                  lv_color_white());
     lv_obj_set_pos(title, 18, 15);
     ctx->wifi_status = lvww_label(ctx, page, "当前未连接", ctx->cfg.font_ui,
@@ -1381,11 +1511,11 @@ static void lvww_build_city(lvww_ctx_t *ctx)
                                  lv_color_white());
     lv_obj_set_pos(title, 18, 15);
     ctx->city_input = lv_textarea_create(page);
-    lv_obj_set_size(ctx->city_input, 560, 48);
-    lv_obj_set_pos(ctx->city_input, 220, 5);
+    lv_obj_set_size(ctx->city_input, 668, 42);
+    lv_obj_set_pos(ctx->city_input, 112, 10);
     lv_textarea_set_one_line(ctx->city_input, RT_TRUE);
     lv_textarea_set_max_length(ctx->city_input, 40);
-    lv_textarea_set_placeholder_text(ctx->city_input, "输入 Beijing / Shanghai / 拼音");
+    lv_textarea_set_placeholder_text(ctx->city_input, "输入城市中文名或拼音");
     lv_obj_set_style_text_font(ctx->city_input, ctx->cfg.font_city, 0);
     lvww_style_textarea(ctx, ctx->city_input);
     lv_obj_add_event_cb(ctx->city_input, lvww_textarea_focus_cb, LV_EVENT_FOCUSED, ctx);
@@ -1401,16 +1531,16 @@ static void lvww_build_city(lvww_ctx_t *ctx)
     lv_obj_set_style_pad_row(ctx->city_results, 8, 0);
     lv_obj_set_flex_flow(ctx->city_results, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scrollbar_mode(ctx->city_results, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_t *hint = lvww_label(ctx, ctx->city_results, "输入英文或拼音搜索城市",
-                                ctx->cfg.font_ui, lv_color_hex(0xAEB8CC));
-    lv_obj_center(hint);
+    ctx->city_count = (uint16_t)lvww_city_catalog_search(
+        "", ctx->city_candidates, ctx->cfg.max_city_results);
+    lvww_refresh_city_results(ctx);
 }
 
 static void lvww_build_ui(lvww_ctx_t *ctx, lv_obj_t *parent)
 {
     int i;
     lv_obj_t *nav;
-    static const char *nav_text[] = {"首页", "Wi-Fi", "城市"};
+    static const char *nav_text[] = {"首页", "无线", "城市"};
 
     ctx->root = lv_obj_create(parent);
     lv_obj_set_size(ctx->root, ctx->cfg.width, ctx->cfg.height);
@@ -1438,11 +1568,14 @@ static void lvww_build_ui(lvww_ctx_t *ctx, lv_obj_t *parent)
     lvww_build_city(ctx);
 
     nav = lv_obj_create(ctx->root);
-    lv_obj_set_size(nav, ctx->cfg.width, 62);
+    lv_obj_set_size(nav, ctx->cfg.width, 120);
     lv_obj_align(nav, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_color(nav, lv_color_hex(0x121A29), 0);
     lv_obj_set_style_border_width(nav, 0, 0);
-    lv_obj_set_style_pad_all(nav, 6, 0);
+    lv_obj_set_style_border_width(nav, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_side(nav, LV_BORDER_SIDE_TOP, LV_PART_MAIN);
+    lv_obj_set_style_border_color(nav, lv_color_hex(0x2C3A52), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(nav, 10, 0);
     lv_obj_set_style_pad_column(nav, 8, 0);
     lv_obj_set_flex_flow(nav, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(nav, LV_FLEX_ALIGN_SPACE_EVENLY,
@@ -1450,12 +1583,14 @@ static void lvww_build_ui(lvww_ctx_t *ctx, lv_obj_t *parent)
     lv_obj_clear_flag(nav, LV_OBJ_FLAG_SCROLLABLE);
     for (i = 0; i < 3; ++i)
     {
-        lv_obj_t *button = lvww_button(ctx, nav, nav_text[i], 245, 50);
+        lv_obj_t *button = lvww_button(ctx, nav, nav_text[i], 245, 88);
+        ctx->nav_buttons[i] = button;
         ctx->nav_bindings[i].ctx = ctx;
         ctx->nav_bindings[i].tag = i;
         lv_obj_add_event_cb(button, lvww_nav_event_cb, LV_EVENT_CLICKED,
                             &ctx->nav_bindings[i]);
     }
+    lvww_refresh_nav(ctx, LVWW_PAGE_HOME);
 
     /*
      * Keep the keyboard in this component's object tree.  A keyboard on
@@ -1474,6 +1609,11 @@ static void lvww_build_ui(lvww_ctx_t *ctx, lv_obj_t *parent)
     lv_obj_set_style_bg_color(ctx->keyboard, ctx->cfg.panel_color, 0);
     lv_obj_set_style_bg_opa(ctx->keyboard, LV_OPA_COVER, 0);
     lv_obj_set_style_text_font(ctx->keyboard, ctx->cfg.font_ui, 0);
+    lv_obj_set_style_text_color(ctx->keyboard, lv_color_white(), LV_PART_ITEMS);
+    lv_obj_set_style_text_color(ctx->keyboard, lv_color_white(),
+                                LV_PART_ITEMS | LV_STATE_PRESSED);
+    lv_obj_set_style_text_color(ctx->keyboard, lv_color_white(),
+                                LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_add_event_cb(ctx->keyboard, lvww_keyboard_event_cb, LV_EVENT_ALL, ctx);
     lv_obj_add_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN);
 
@@ -1494,6 +1634,7 @@ static void lvww_build_ui(lvww_ctx_t *ctx, lv_obj_t *parent)
 
 void lvww_config_init(lvww_config_t *config)
 {
+    const lv_font_t *external_font;
     if (!config)
         return;
     rt_memset(config, 0, sizeof(*config));
@@ -1507,25 +1648,16 @@ void lvww_config_init(lvww_config_t *config)
     config->background_color = lv_color_hex(0x0D1422);
     config->panel_color = lv_color_hex(0x202B40);
     config->accent_color = lv_color_hex(0x2F80ED);
-#if defined(LV_FONT_SIMSUN_16_CJK) && LV_FONT_SIMSUN_16_CJK
     config->font_ui = &lvww_font_cjk_16;
-#else
-    config->font_ui = LV_FONT_DEFAULT;
-#endif
+    lvww_assets_init();
+    external_font = lvww_assets_font();
 #if defined(LV_FONT_MONTSERRAT_48) && LV_FONT_MONTSERRAT_48
     config->font_large = &lv_font_montserrat_48;
 #else
     config->font_large = config->font_ui;
 #endif
-    config->font_city = config->font_ui;
-    lvww_copy_text(config->default_city.id, sizeof(config->default_city.id), "beijing");
-    lvww_copy_text(config->default_city.name, sizeof(config->default_city.name), "Beijing");
-    lvww_copy_text(config->default_city.admin, sizeof(config->default_city.admin), "Beijing");
-    lvww_copy_text(config->default_city.country, sizeof(config->default_city.country), "China");
-    lvww_copy_text(config->default_city.timezone, sizeof(config->default_city.timezone),
-                   "Asia/Shanghai");
-    config->default_city.latitude = 39.9042;
-    config->default_city.longitude = 116.4074;
+    config->font_city = external_font ? external_font : config->font_ui;
+    lvww_city_catalog_search("beijing", &config->default_city, 1);
 }
 
 lvww_ctx_t *lvww_create(lv_obj_t *parent, const lvww_config_t *config,

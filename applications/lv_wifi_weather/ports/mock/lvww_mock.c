@@ -1,6 +1,5 @@
 #include "lvww_mock.h"
 
-#include <ctype.h>
 #include <string.h>
 #include <time.h>
 
@@ -56,31 +55,6 @@ struct lvww_mock
     uint32_t cancelled[LVWW_OP_STORAGE + 1];
     lvww_mock_kv_t kv[LVWW_MOCK_KV_SLOTS];
 };
-
-static const lvww_city_t mock_cities[] = {
-    {"beijing", "Beijing", "Beijing", "China", "Asia/Shanghai", 39.9042, 116.4074},
-    {"shanghai", "Shanghai", "Shanghai", "China", "Asia/Shanghai", 31.2304, 121.4737},
-    {"shenzhen", "Shenzhen", "Guangdong", "China", "Asia/Shanghai", 22.5431, 114.0579},
-    {"guangzhou", "Guangzhou", "Guangdong", "China", "Asia/Shanghai", 23.1291, 113.2644},
-    {"chengdu", "Chengdu", "Sichuan", "China", "Asia/Shanghai", 30.5728, 104.0668},
-    {"hangzhou", "Hangzhou", "Zhejiang", "China", "Asia/Shanghai", 30.2741, 120.1551},
-    {"london", "London", "England", "United Kingdom", "Europe/London", 51.5072, -0.1276},
-    {"new-york", "New York", "New York", "United States", "America/New_York", 40.7128, -74.0060}
-};
-
-static rt_bool_t mock_contains_ci(const char *text, const char *needle)
-{
-    char lower_text[96];
-    char lower_needle[48];
-    rt_size_t i;
-    for (i = 0; i + 1 < sizeof(lower_text) && text[i]; ++i)
-        lower_text[i] = (char)tolower((unsigned char)text[i]);
-    lower_text[i] = '\0';
-    for (i = 0; i + 1 < sizeof(lower_needle) && needle[i]; ++i)
-        lower_needle[i] = (char)tolower((unsigned char)needle[i]);
-    lower_needle[i] = '\0';
-    return strstr(lower_text, lower_needle) != RT_NULL;
-}
 
 static lvww_operation_t mock_operation(lvww_mock_cmd_type_t type)
 {
@@ -201,7 +175,6 @@ static void mock_disconnect(lvww_mock_t *mock, const lvww_mock_cmd_t *cmd)
 static void mock_city(lvww_mock_t *mock, const lvww_mock_cmd_t *cmd)
 {
     lvww_event_t event;
-    rt_size_t i;
     rt_thread_mdelay(500);
     if (!mock->network_available)
     {
@@ -210,15 +183,8 @@ static void mock_city(lvww_mock_t *mock, const lvww_mock_cmd_t *cmd)
     }
     rt_memset(&event, 0, sizeof(event));
     event.type = LVWW_EVT_CITY_SEARCH_RESULT;
-    for (i = 0; i < sizeof(mock_cities) / sizeof(mock_cities[0]) &&
-                event.data.city_search.count < LVWW_MAX_CITY_RESULTS; ++i)
-    {
-        const lvww_city_t *city = &mock_cities[i];
-        if (mock_contains_ci(city->name, cmd->data.query) ||
-            mock_contains_ci(city->id, cmd->data.query) ||
-            mock_contains_ci(city->admin, cmd->data.query))
-            event.data.city_search.items[event.data.city_search.count++] = *city;
-    }
+    event.data.city_search.count = (uint16_t)lvww_city_catalog_search(
+        cmd->data.query, event.data.city_search.items, LVWW_MAX_CITY_RESULTS);
     mock_post(mock, cmd, &event);
 }
 

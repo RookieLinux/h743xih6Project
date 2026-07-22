@@ -25,6 +25,7 @@ extern "C" {
 typedef struct lvww_ctx lvww_ctx_t;
 
 LV_FONT_DECLARE(lvww_font_cjk_16)
+LV_FONT_DECLARE(lvww_font_cjk_32)
 
 typedef enum
 {
@@ -190,6 +191,15 @@ typedef struct
 } lvww_port_ops_t;
 
 void lvww_config_init(lvww_config_t *config);
+
+/*
+ * Search the built-in, UTF-8 common-city catalog.  Passing an empty query
+ * returns the default list in display order.  This is also used by ports to
+ * avoid ambiguous online geocoding results for common Chinese cities.
+ */
+rt_size_t lvww_city_catalog_search(const char *query,
+                                   lvww_city_t *cities,
+                                   rt_size_t capacity);
 
 lvww_ctx_t *lvww_create(lv_obj_t *parent,
                         const lvww_config_t *config,

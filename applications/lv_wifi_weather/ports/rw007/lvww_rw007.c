@@ -16,7 +16,7 @@
 /* DNS/SAL/newlib run synchronously in this worker.  A 6 KiB stack can
  * underflow into the dynamically allocated rt_thread control block while
  * resolving the first host after Wi-Fi comes online. */
-#define LVWW_RW007_STACK_SIZE        (12 * 1024)
+#define LVWW_RW007_STACK_SIZE        (16 * 1024)
 #define LVWW_RW007_SCAN_TIMEOUT_MS   12000
 #define LVWW_RW007_READY_TIMEOUT_MS  15000
 #define LVWW_RW007_SOCKET_TIMEOUT_MS 8000
@@ -550,11 +550,27 @@ static unsigned json_hex4(const char *text, rt_bool_t *valid)
     return value;
 }
 
+static void json_put_bytes(char *output, rt_size_t capacity, rt_size_t *used,
+                           const unsigned char *bytes, unsigned count)
+{
+    if (*used + count >= capacity)
+    {
+        /* Mark the buffer full without ever writing half of a UTF-8 glyph. */
+        *used = capacity - 1u;
+        return;
+    }
+    rt_memcpy(output + *used, bytes, count);
+    *used += count;
+}
+
 static void json_put_utf8(char *output, rt_size_t capacity, rt_size_t *used,
                           unsigned codepoint)
 {
-    unsigned char bytes[3];
-    int count, i;
+    unsigned char bytes[4];
+    unsigned count;
+    if (codepoint > 0x10FFFFu ||
+        (codepoint >= 0xD800u && codepoint <= 0xDFFFu))
+        codepoint = 0xFFFDu;
     if (codepoint < 0x80u)
     {
         bytes[0] = (unsigned char)codepoint;
@@ -566,15 +582,22 @@ static void json_put_utf8(char *output, rt_size_t capacity, rt_size_t *used,
         bytes[1] = (unsigned char)(0x80u | (codepoint & 0x3Fu));
         count = 2;
     }
-    else
+    else if (codepoint < 0x10000u)
     {
         bytes[0] = (unsigned char)(0xE0u | (codepoint >> 12));
         bytes[1] = (unsigned char)(0x80u | ((codepoint >> 6) & 0x3Fu));
         bytes[2] = (unsigned char)(0x80u | (codepoint & 0x3Fu));
         count = 3;
     }
-    for (i = 0; i < count && *used + 1u < capacity; ++i)
-        output[(*used)++] = (char)bytes[i];
+    else
+    {
+        bytes[0] = (unsigned char)(0xF0u | (codepoint >> 18));
+        bytes[1] = (unsigned char)(0x80u | ((codepoint >> 12) & 0x3Fu));
+        bytes[2] = (unsigned char)(0x80u | ((codepoint >> 6) & 0x3Fu));
+        bytes[3] = (unsigned char)(0x80u | (codepoint & 0x3Fu));
+        count = 4;
+    }
+    json_put_bytes(output, capacity, used, bytes, count);
 }
 
 static rt_bool_t json_copy_string(const char *value, const char *end,
@@ -592,7 +615,32 @@ static rt_bool_t json_copy_string(const char *value, const char *end,
         char c = *cursor++;
         if (c != '\\')
         {
-            if (used + 1u < capacity) output[used++] = c;
+            const unsigned char *sequence =
+                (const unsigned char *)(cursor - 1);
+            unsigned char lead = sequence[0];
+            unsigned count = 1;
+            unsigned i;
+            if ((lead & 0xE0u) == 0xC0u) count = 2;
+            else if ((lead & 0xF0u) == 0xE0u) count = 3;
+            else if ((lead & 0xF8u) == 0xF0u) count = 4;
+            else if (lead >= 0x80u) count = 0;
+            if (!count || cursor + count - 1u > end)
+            {
+                json_put_utf8(output, capacity, &used, 0xFFFDu);
+                continue;
+            }
+            for (i = 1; i < count; ++i)
+            {
+                if ((sequence[i] & 0xC0u) != 0x80u)
+                    break;
+            }
+            if (i != count)
+            {
+                json_put_utf8(output, capacity, &used, 0xFFFDu);
+                continue;
+            }
+            json_put_bytes(output, capacity, &used, sequence, count);
+            cursor += count - 1u;
             continue;
         }
         if (cursor >= end) return RT_FALSE;
@@ -602,6 +650,18 @@ static rt_bool_t json_copy_string(const char *value, const char *end,
             codepoint = json_hex4(cursor, &valid);
             if (!valid) return RT_FALSE;
             cursor += 4;
+            if (codepoint >= 0xD800u && codepoint <= 0xDBFFu &&
+                cursor + 6 <= end && cursor[0] == '\\' && cursor[1] == 'u')
+            {
+                unsigned low = json_hex4(cursor + 2, &valid);
+                if (valid && low >= 0xDC00u && low <= 0xDFFFu)
+                {
+                    codepoint = 0x10000u +
+                                ((codepoint - 0xD800u) << 10) +
+                                (low - 0xDC00u);
+                    cursor += 6;
+                }
+            }
             json_put_utf8(output, capacity, &used, codepoint);
         }
         else
@@ -611,7 +671,8 @@ static rt_bool_t json_copy_string(const char *value, const char *end,
             else if (c == 't') c = '\t';
             else if (c == 'b') c = '\b';
             else if (c == 'f') c = '\f';
-            if (used + 1u < capacity) output[used++] = c;
+            json_put_bytes(output, capacity, &used,
+                           (const unsigned char *)&c, 1);
         }
     }
     output[used] = '\0';
@@ -747,7 +808,7 @@ static void rw_scan_done_cb(int event, struct rt_wlan_buff *buff, void *paramete
 static void rw_disconnected_cb(int event, struct rt_wlan_buff *buff, void *parameter)
 {
     lvww_rw007_t *backend = (lvww_rw007_t *)parameter;
-    lvww_event_t state;
+    lvww_event_t *state;
     lvww_ctx_t *ctx;
     rt_bool_t suppress;
     (void)event;
@@ -758,12 +819,19 @@ static void rw_disconnected_cb(int event, struct rt_wlan_buff *buff, void *param
     ctx = backend->ctx;
     rt_mutex_release(backend->lock);
     if (suppress || !ctx) return;
-    rt_memset(&state, 0, sizeof(state));
-    state.type = LVWW_EVT_WIFI_STATE;
-    state.request_id = 0;
-    state.data.wifi_state.state = LVWW_WIFI_OFFLINE;
-    state.data.wifi_state.reason = LVWW_WIFI_REASON_DROPPED;
-    lvww_post_event(ctx, &state);
+
+    /* This callback runs in the 2 KiB WLAN workqueue thread.  lvww_event_t is
+     * almost 2 KiB because its union contains the complete city-result list,
+     * so placing one on this stack immediately trips RT-Thread's overflow
+     * guard.  Allocate the copied message temporarily from the heap instead. */
+    state = (lvww_event_t *)rt_calloc(1, sizeof(*state));
+    if (!state) return;
+    state->type = LVWW_EVT_WIFI_STATE;
+    state->request_id = 0;
+    state->data.wifi_state.state = LVWW_WIFI_OFFLINE;
+    state->data.wifi_state.reason = LVWW_WIFI_REASON_DROPPED;
+    lvww_post_event(ctx, state);
+    rt_free(state);
 }
 
 static void rw_do_scan(lvww_rw007_t *backend, const lvww_rw_cmd_t *cmd)
@@ -810,6 +878,12 @@ static void rw_do_connect(lvww_rw007_t *backend, const lvww_rw_cmd_t *cmd)
                LVWW_SSID_MAX_LEN);
     rw_post(backend, cmd, &event);
 
+    /* A manual connection attempt must own the retry policy.  Otherwise a
+     * CONNECT_FAIL starts the WLAN manager's auto-connect timer while this
+     * worker is still unwinding rt_wlan_connect(), and both paths contend for
+     * the same management mutex.  Enable auto reconnect again only after the
+     * new credentials have connected successfully. */
+    rt_wlan_config_autoreconnect(RT_FALSE);
     rc = rt_wlan_connect(cmd->data.credentials.ssid,
                          cmd->data.credentials.secure ?
                          cmd->data.credentials.password : RT_NULL);
@@ -834,7 +908,9 @@ static void rw_do_connect(lvww_rw007_t *backend, const lvww_rw_cmd_t *cmd)
         event.data.wifi_state.state = LVWW_WIFI_OFFLINE;
         event.data.wifi_state.reason = rc == RT_EOK ?
                                        LVWW_WIFI_REASON_TIMEOUT :
-                                       LVWW_WIFI_REASON_OTHER;
+                                       (cmd->data.credentials.secure ?
+                                        LVWW_WIFI_REASON_AUTH :
+                                        LVWW_WIFI_REASON_OTHER);
     }
     rw_post(backend, cmd, &event);
 }
@@ -846,6 +922,7 @@ static void rw_do_disconnect(lvww_rw007_t *backend, const lvww_rw_cmd_t *cmd)
     rt_mutex_take(backend->lock, RT_WAITING_FOREVER);
     backend->disconnecting = RT_TRUE;
     rt_mutex_release(backend->lock);
+    rt_wlan_config_autoreconnect(RT_FALSE);
     rc = rt_wlan_disconnect();
     rt_mutex_take(backend->lock, RT_WAITING_FOREVER);
     backend->disconnecting = RT_FALSE;
@@ -872,6 +949,15 @@ static void rw_do_city(lvww_rw007_t *backend, const lvww_rw_cmd_t *cmd)
     const char *results, *results_end;
     lvww_event_t event;
     unsigned index;
+    rt_memset(&event, 0, sizeof(event));
+    event.type = LVWW_EVT_CITY_SEARCH_RESULT;
+    event.data.city_search.count = (uint16_t)lvww_city_catalog_search(
+        cmd->data.query, event.data.city_search.items, LVWW_MAX_CITY_RESULTS);
+    if (event.data.city_search.count)
+    {
+        rw_post(backend, cmd, &event);
+        return;
+    }
     if (!rt_wlan_is_ready())
     {
         rw_post_error(backend, cmd, LVWW_OP_CITY_SEARCH, -RT_ERROR,
@@ -902,8 +988,6 @@ static void rw_do_city(lvww_rw007_t *backend, const lvww_rw_cmd_t *cmd)
                       "城市数据格式错误");
         return;
     }
-    rt_memset(&event, 0, sizeof(event));
-    event.type = LVWW_EVT_CITY_SEARCH_RESULT;
     for (index = 0; index < LVWW_MAX_CITY_RESULTS; ++index)
     {
         const char *item, *item_end;
