@@ -433,6 +433,8 @@ static int file_font_open(const char *path)
         }
     }
 
+    /* Publish the new font atomically with respect to the LVGL thread. */
+    rt_enter_critical();
     old_fd = file_font_loaded ? file_font.fd : -1;
     old_codepoints = file_font.codepoints;
     rt_memset(file_font.cache, 0, sizeof(file_font.cache));
@@ -452,6 +454,7 @@ static int file_font_open(const char *path)
     file_font.font.dsc = &file_font;
     file_font.font.fallback = &lvww_font_cjk_16;
     file_font_loaded = RT_TRUE;
+    rt_exit_critical();
     if (old_fd >= 0)
         close(old_fd);
     if (old_codepoints)
@@ -601,6 +604,35 @@ int lvww_assets_init(void)
     return lvww_assets_reload();
 }
 
+int lvww_assets_unload(void)
+{
+    uint32_t *old_codepoints;
+    int old_fd;
+    int result = RT_EOK;
+
+    file_font_prepare();
+
+    /* Remove the live state before closing/freeing it. The font object stays
+     * valid and automatically falls back to the firmware-resident subset. */
+    rt_enter_critical();
+    old_fd = file_font_loaded ? file_font.fd : -1;
+    old_codepoints = file_font.codepoints;
+    file_font_loaded = RT_FALSE;
+    file_font.fd = -1;
+    file_font.codepoints = RT_NULL;
+    file_font.glyph_count = 0;
+    file_font.bitmap_offset = 0;
+    file_font.cache_clock = 0;
+    rt_memset(file_font.cache, 0, sizeof(file_font.cache));
+    rt_exit_critical();
+
+    if (old_fd >= 0 && close(old_fd) != 0)
+        result = -RT_ERROR;
+    if (old_codepoints)
+        rt_free(old_codepoints);
+    return result;
+}
+
 const lv_font_t *lvww_assets_font(void)
 {
     file_font_prepare();
@@ -680,4 +712,18 @@ static int lvww_assets_cmd(int argc, char **argv)
 }
 MSH_CMD_EXPORT_ALIAS(lvww_assets_cmd, uires_reload,
                      reload UI resources from QSPI filesystem);
+
+static int lvww_assets_unload_cmd(int argc, char **argv)
+{
+    int result;
+    (void)argc;
+    (void)argv;
+    result = lvww_assets_unload();
+    rt_kprintf("QSPI UI font: %s, safe to replace %s\n",
+               result == RT_EOK ? "released" : "release failed",
+               LVWW_ASSET_FONT_PATH);
+    return result;
+}
+MSH_CMD_EXPORT_ALIAS(lvww_assets_unload_cmd, uires_unload,
+                     release QSPI UI font before replacing it);
 #endif

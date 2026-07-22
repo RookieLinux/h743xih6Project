@@ -23,6 +23,8 @@ extern "C" {
 /* Register Q: with LVGL and load the streaming 4 bpp font from QSPI. */
 int lvww_assets_init(void);
 int lvww_assets_reload(void);
+/* Release the streaming font file so it can be replaced or deleted. */
+int lvww_assets_unload(void);
 
 /* Returns NULL when the external font is not present or is invalid. */
 const lv_font_t *lvww_assets_font(void);

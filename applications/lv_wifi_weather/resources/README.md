@@ -49,8 +49,18 @@ To deliberately use a local font instead, pass `--font path/to/font.otf`.
 The same command regenerates the small font compiled into the firmware, the
 QSPI `.fnt`, `cities_zh.tsv`, `manifest.json`, character list, and font license.
 
-After replacing resources while the device is running, execute
-`uires_reload` in the RT-Thread shell.
+Before replacing the active streaming font, execute `uires_unload` in the
+RT-Thread shell. The UI temporarily falls back to the firmware-resident font,
+and the `.fnt` file can then be removed safely. After transferring the complete
+replacement file, execute `uires_reload`.
+
+```text
+uires_unload
+rm /ui/fonts/lvww_source_han_sans_sc_16_4bpp.fnt
+ry
+mv /lvww_source_han_sans_sc_16_4bpp.fnt /ui/fonts/lvww_source_han_sans_sc_16_4bpp.fnt
+uires_reload
+```
 
 The firmware creates `/ui/fonts`, `/ui/images`, `/ui/text`, and `/ui/data`
 automatically.
