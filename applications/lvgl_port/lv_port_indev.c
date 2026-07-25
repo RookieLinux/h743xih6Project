@@ -252,20 +252,20 @@ static void touchpad_read(lv_indev_drv_t * indev_drv, lv_indev_data_t * data)
                 touch_to_screen(&touch_data[i], &screen_pos);
                 last_x = screen_pos.x;
                 last_y = screen_pos.y;
-                if (touch_data[i].event == RT_TOUCH_EVENT_DOWN)
-                {
-                    rt_kprintf("Touch: x=%d, y=%d, id=%d, event=%d, width=%d\n",
-                        screen_pos.x,
-                        screen_pos.y,
-                        touch_data[i].track_id,
-                        touch_data[i].event,
-                        touch_data[i].width);
-                }
+//                if (touch_data[i].event == RT_TOUCH_EVENT_DOWN)
+//                {
+//                    rt_kprintf("Touch: x=%d, y=%d, id=%d, event=%d, width=%d\n",
+//                        screen_pos.x,
+//                        screen_pos.y,
+//                        touch_data[i].track_id,
+//                        touch_data[i].event,
+//                        touch_data[i].width);
+//                }
             }
             else if (touch_data[i].event == RT_TOUCH_EVENT_UP)
             {
                 last_state = LV_INDEV_STATE_REL;
-                rt_kprintf("Touch UP: id=%d\n", touch_data[i].track_id);
+//                rt_kprintf("Touch UP: id=%d\n", touch_data[i].track_id);
             }
         }
     }
