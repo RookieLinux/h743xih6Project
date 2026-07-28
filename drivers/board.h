@@ -29,8 +29,8 @@ extern "C"
 
 /*-------------------------- ROM/RAM CONFIG BEGIN --------------------------*/
 
-#define ROM_START              ((uint32_t)0x08000000)
-#define ROM_SIZE               (2 * 1024 * 1024)
+#define ROM_START              ((uint32_t)0x08100000)
+#define ROM_SIZE               (1024 * 1024)
 #define ROM_END                ((uint32_t)(ROM_START + ROM_SIZE))
 
 #define ITCM_START             ((uint32_t)0x00000000)

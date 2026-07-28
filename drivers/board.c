@@ -54,6 +54,15 @@ RT_WEAK void rt_hw_board_init()
 {
     extern void hw_board_init(char *clock_src, int32_t clock_src_freq, int32_t clock_target_freq);
 
+    /*
+     * The application is linked in internal Flash Bank 2. Set VTOR before
+     * SysTick or any peripheral interrupt is enabled, without modifying the
+     * shared STM32 CMSIS SystemInit() implementation.
+     */
+    SCB->VTOR = ROM_START;
+    __DSB();
+    __ISB();
+
 #if defined(__GNUC__)
     bsp_itcm_init();
 #endif
