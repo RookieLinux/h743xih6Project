@@ -1,8 +1,23 @@
 # STM32H743XIH6 RT-Thread + LVGL 工程
 
-这是一个面向 STM32H743XIH6 的 RT-Thread 嵌入式工程，支持使用 RT-Thread Studio 或 CMake/CLion 进行开发和构建。
+[中文](README.md) | [English](README_EN.md)
+
+这是一个面向 STM32H743XIH6 的 RT-Thread APP 工程，支持使用 RT-Thread Studio 或 CMake/CLion 进行开发和构建。
 
 工程目前完成了 800 × 480 RGB LCD、SDRAM 帧缓冲、LTDC、DMA2D、GT911 触摸、QSPI Flash、FAL/SFUD、FinSH 和 LVGL 的基础适配。默认应用为基于 RW007 的中文 Wi-Fi 天气界面，支持无线配置、本地城市搜索、Open-Meteo 天气请求、离线缓存以及 QSPI 流式中文字库。
+
+> 本仓库仅包含 APP 代码。配套 Bootloader 代码请参见 [RookieLinux/h743xih6Bootloader](https://github.com/RookieLinux/h743xih6Bootloader)。
+
+## 固件布局
+
+STM32H743XIH6 的 2 MiB 内部 Flash 被划分为 Bootloader 和 APP 两部分：
+
+| 固件 | 地址范围 | 容量 | 代码仓库 |
+| --- | --- | --- | --- |
+| Bootloader | `0x08000000`–`0x080FFFFF` | 1 MiB | [RookieLinux/h743xih6Bootloader](https://github.com/RookieLinux/h743xih6Bootloader) |
+| APP | `0x08100000`–`0x081FFFFF` | 1 MiB | 当前仓库 |
+
+APP 的链接地址和中断向量表地址均为 `0x08100000`。上电后由 Bootloader 校验并跳转到 APP；APP 初始化时会将 `SCB->VTOR` 设置为 APP 的向量表地址。升级、烧录或调试时，请确保所用 BIN/ELF 的目标地址与上述布局一致。
 
 ## 硬件
 
@@ -10,7 +25,7 @@
 - 系统主频：480 MHz
 - 外部晶振：25 MHz
 - MCU 内部 Flash：2 MiB
-- 当前链接脚本使用的内部 Flash 空间：1 MiB，起始地址 `0x08000000`
+- 当前 APP 使用的内部 Flash 空间：1 MiB，起始地址 `0x08100000`
 - DTCM RAM：128 KiB，起始地址 `0x20000000`
 - AXI SRAM：512 KiB，起始地址 `0x24000000`
 - 外部 SDRAM：32 MiB，起始地址 `0xC0000000`，32-bit FMC 总线
@@ -286,7 +301,9 @@ CMake 当前负责生成 ELF、BIN 和 MAP 文件，不直接执行烧录。
 
 - 使用 RT-Thread Studio 时，可通过 IDE 中已配置的调试器下载和调试。
 - 使用 CLion 时，需要另行配置 OpenOCD、J-Link 或 STM32CubeProgrammer。
-- 烧录前请确认目标地址与链接脚本一致，当前程序入口位于内部 Flash `0x08000000`。
+- APP 的 BIN 文件应烧录到内部 Flash `0x08100000`；使用 ELF 下载时，工具会读取链接地址。
+- 完整启动流程还需要将配套 [Bootloader](https://github.com/RookieLinux/h743xih6Bootloader) 烧录到 `0x08000000`。
+- 仅调试 APP 时，请确认调试器从 APP 的复位入口启动，并使用 `0x08100000` 处的向量表。
 
 ## 配置注意事项
 
@@ -294,7 +311,7 @@ CMake 当前负责生成 ELF、BIN 和 MAP 文件，不直接执行烧录。
 - 芯片、时钟、串口和外设引脚配置主要位于 `drivers/board.h`。
 - SDRAM、LTDC、DMA2D、GT911 和 QSPI 初始化主要位于 `drivers/board.c`。
 - CMake 链接脚本为 `linkscripts/STM32H743XIHx/link.lds`。
-- 当前链接脚本只分配了 1 MiB 内部 Flash，虽然 STM32H743XIH6 具有 2 MiB Flash；扩展程序空间前应同步检查 Flash 布局、FAL 分区和升级方案。
+- 当前链接脚本为 APP 分配 Bank 2 的 1 MiB 内部 Flash（`0x08100000`–`0x081FFFFF`），Bank 1 保留给 Bootloader；调整空间前应同步检查 Bootloader、Flash 布局、FAL 分区和升级方案。
 - W25Q64 的 `filesystem` FAL 分区挂载到根目录 `/`，大小为 5 MiB，起始偏移为 `0x00300000`。
 - LVGL 使用两个完整的 800 × 480 RGB565 帧缓冲，每个缓冲区占用 768,000 字节。
 - 修改 `rtconfig.h`、启用新的 RT-Thread 组件或安装新软件包后，应同步检查 `cmake/components/` 中的组件目录和排除项。

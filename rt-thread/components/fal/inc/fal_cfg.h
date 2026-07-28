@@ -30,9 +30,9 @@ extern struct fal_flash_dev nor_flash0;
 /* partition table */
 #define FAL_PART_TABLE                                                               \
 {                                                                                    \
-    /*{FAL_PART_MAGIC_WORD,          "bl",       "onchip_flash",             0,      512*1024, 0},*/ \
-    /*{FAL_PART_MAGIC_WORD,         "app",        "onchip_flash",          512*1024,      1536*1024, 0},*/ \
-    {FAL_PART_MAGIC_WORD,         "app",       "onchip_flash",                            0,     2048*1024, 0}, \
+    /*{FAL_PART_MAGIC_WORD,          "bl",       "onchip_flash",                            0,   1*1024*1024, 0},*/ \
+    /*{FAL_PART_MAGIC_WORD,         "app",       "onchip_flash",                  1*1024*1024,   1*1024*1024, 0},*/ \
+    {FAL_PART_MAGIC_WORD,         "app",       "onchip_flash",                            0,   1*1024*1024, 0}, \
     {FAL_PART_MAGIC_WORD,     "upgrade",        FAL_USING_NOR_FLASH_DEV_NAME,             0,   1*1024*1024, 0}, \
     {FAL_PART_MAGIC_WORD,     "factory",        FAL_USING_NOR_FLASH_DEV_NAME,   1*1024*1024,   1*1024*1024, 0}, \
     {FAL_PART_MAGIC_WORD,    "download",        FAL_USING_NOR_FLASH_DEV_NAME,   2*1024*1024,   1*1024*1024, 0}, \
