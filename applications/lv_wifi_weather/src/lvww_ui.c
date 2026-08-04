@@ -261,7 +261,98 @@ void lvww_refresh_home(lvww_ctx_t *ctx)
     lv_obj_update_layout(ctx->home_temperature);
     lv_obj_align_to(ctx->home_temperature_unit, ctx->home_temperature,
                     LV_ALIGN_OUT_RIGHT_TOP, 4, 4);
+    lv_obj_update_layout(ctx->home_net);
+    lv_obj_align(ctx->home_net, LV_ALIGN_TOP_RIGHT, -4, 108);
+    lv_obj_update_layout(ctx->home_updated);
+    lv_obj_align(ctx->home_updated, LV_ALIGN_BOTTOM_RIGHT, -4, -4);
     lvww_refresh_clock(ctx);
+}
+
+void lvww_refresh_firmware(lvww_ctx_t *ctx)
+{
+    const lvww_firmware_info_t *firmware;
+    const char *state_text = "等待检查";
+    const char *button_text = "正在检查";
+    lv_color_t state_color = lv_color_hex(0xF2C66D);
+    rt_bool_t enabled = RT_FALSE;
+    rt_bool_t show_progress = RT_FALSE;
+
+    if (!ctx || !ctx->home_firmware_state)
+        return;
+    firmware = &ctx->firmware_info;
+
+    switch (firmware->state)
+    {
+    case LVWW_FIRMWARE_UP_TO_DATE:
+        state_text = "已是最新版本";
+        button_text = "暂无更新";
+        state_color = lv_color_hex(0x55D6A9);
+        break;
+    case LVWW_FIRMWARE_AVAILABLE:
+        state_text = firmware->mandatory ? "发现重要更新" : "发现新版本";
+        button_text = "立即更新";
+        state_color = ctx->cfg.accent_color;
+        enabled = RT_TRUE;
+        break;
+    case LVWW_FIRMWARE_DOWNLOADING:
+        state_text = "正在下载";
+        button_text = "下载中，请稍候";
+        state_color = ctx->cfg.accent_color;
+        show_progress = RT_TRUE;
+        break;
+    case LVWW_FIRMWARE_VERIFYING:
+        state_text = "正在校验固件";
+        button_text = "校验中，请稍候";
+        state_color = ctx->cfg.accent_color;
+        show_progress = RT_TRUE;
+        break;
+    case LVWW_FIRMWARE_READY:
+        state_text = "更新已就绪";
+        button_text = "等待安装";
+        state_color = lv_color_hex(0x55D6A9);
+        break;
+    case LVWW_FIRMWARE_ERROR:
+        state_text = "更新失败";
+        button_text = "重试更新";
+        state_color = lv_color_hex(0xF07B88);
+        enabled = firmware->available_version_code != 0U;
+        break;
+    case LVWW_FIRMWARE_CHECKING:
+    default:
+        break;
+    }
+
+    lv_label_set_text(ctx->home_firmware_state, state_text);
+    lv_obj_set_style_text_color(ctx->home_firmware_state, state_color, 0);
+    lv_label_set_text_fmt(ctx->home_firmware_current, "当前版本  %s",
+                          firmware->current_version[0]
+                              ? firmware->current_version
+                              : "未知");
+    lv_label_set_text_fmt(ctx->home_firmware_available, "可用版本  %s",
+                          firmware->available_version[0]
+                              ? firmware->available_version
+                              : "--");
+    lv_label_set_text(ctx->home_firmware_notes,
+                      firmware->release_notes[0]
+                          ? firmware->release_notes
+                          : "暂无更新说明。");
+    lv_label_set_text(ctx->home_firmware_button_label, button_text);
+
+    if (enabled)
+        lv_obj_clear_state(ctx->home_firmware_button, LV_STATE_DISABLED);
+    else
+        lv_obj_add_state(ctx->home_firmware_button, LV_STATE_DISABLED);
+
+    if (show_progress)
+    {
+        lv_bar_set_value(ctx->home_firmware_progress,
+                         firmware->progress_percent, LV_ANIM_ON);
+        lv_obj_clear_flag(ctx->home_firmware_progress, LV_OBJ_FLAG_HIDDEN);
+    }
+    else
+    {
+        lv_obj_add_flag(ctx->home_firmware_progress, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 static void lvww_pinyin_reset(lvww_ctx_t *ctx)
@@ -685,11 +776,13 @@ static void lvww_editor_security_cb(lv_event_t *event)
     {
         lv_obj_clear_flag(ctx->editor_password, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(ctx->editor_password_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(ctx->editor_password_toggle, LV_OBJ_FLAG_HIDDEN);
     }
     else
     {
         lv_obj_add_flag(ctx->editor_password, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(ctx->editor_password_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(ctx->editor_password_toggle, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -808,7 +901,6 @@ static void lvww_open_editor(lvww_ctx_t *ctx, const char *ssid, rt_bool_t secure
 
     lv_obj_t *ssid_label = lvww_label(ctx, panel, "SSID", ctx->cfg.font_ui,
                                       lv_color_hex(0xAEB8CC));
-    lv_obj_set_pos(ssid_label, 8, 52);
     ctx->editor_ssid = lv_textarea_create(panel);
     lv_obj_set_size(ctx->editor_ssid, 300, 48);
     lv_obj_set_pos(ctx->editor_ssid, 70, 42);
@@ -819,15 +911,17 @@ static void lvww_open_editor(lvww_ctx_t *ctx, const char *ssid, rt_bool_t secure
     lvww_style_textarea(ctx, ctx->editor_ssid);
     lv_obj_add_event_cb(ctx->editor_ssid, lvww_textarea_focus_cb, LV_EVENT_FOCUSED, ctx);
     lv_obj_add_event_cb(ctx->editor_ssid, lvww_textarea_focus_cb, LV_EVENT_CLICKED, ctx);
+    lv_obj_align_to(ssid_label, ctx->editor_ssid,
+                    LV_ALIGN_OUT_LEFT_MID, -14, 0);
 
     button = lvww_button(ctx, panel, secure ? "加密网络" : "开放网络", 126, 48);
-    lv_obj_set_pos(button, 386, 42);
+    lv_obj_align_to(button, ctx->editor_ssid,
+                    LV_ALIGN_OUT_RIGHT_MID, 16, 0);
     ctx->editor_security_label = lv_obj_get_child(button, 0);
     lv_obj_add_event_cb(button, lvww_editor_security_cb, LV_EVENT_CLICKED, ctx);
 
     ctx->editor_password_label = lvww_label(ctx, panel, "密码", ctx->cfg.font_ui,
                                             lv_color_hex(0xAEB8CC));
-    lv_obj_set_pos(ctx->editor_password_label, 8, 112);
     ctx->editor_password = lv_textarea_create(panel);
     lv_obj_set_size(ctx->editor_password, 300, 48);
     lv_obj_set_pos(ctx->editor_password, 70, 102);
@@ -839,9 +933,13 @@ static void lvww_open_editor(lvww_ctx_t *ctx, const char *ssid, rt_bool_t secure
     lvww_style_textarea(ctx, ctx->editor_password);
     lv_obj_add_event_cb(ctx->editor_password, lvww_textarea_focus_cb, LV_EVENT_FOCUSED, ctx);
     lv_obj_add_event_cb(ctx->editor_password, lvww_textarea_focus_cb, LV_EVENT_CLICKED, ctx);
+    lv_obj_align_to(ctx->editor_password_label, ctx->editor_password,
+                    LV_ALIGN_OUT_LEFT_MID, -14, 0);
 
     button = lvww_button(ctx, panel, "显示", 72, 48);
-    lv_obj_set_pos(button, 386, 102);
+    ctx->editor_password_toggle = button;
+    lv_obj_align_to(button, ctx->editor_password,
+                    LV_ALIGN_OUT_RIGHT_MID, 16, 0);
     lv_obj_add_event_cb(button, lvww_editor_show_password_cb, LV_EVENT_CLICKED, ctx);
 
     button = lvww_button(ctx, panel, "保存并连接", 150, 48);
@@ -859,6 +957,7 @@ static void lvww_open_editor(lvww_ctx_t *ctx, const char *ssid, rt_bool_t secure
     {
         lv_obj_add_flag(ctx->editor_password, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(ctx->editor_password_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(ctx->editor_password_toggle, LV_OBJ_FLAG_HIDDEN);
     }
     lv_obj_move_foreground(ctx->editor);
     lvww_show_keyboard(ctx, ctx->editor_ssid);
@@ -876,6 +975,7 @@ void lvww_close_editor(lvww_ctx_t *ctx)
     ctx->editor_password = RT_NULL;
     ctx->editor_security_label = RT_NULL;
     ctx->editor_password_label = RT_NULL;
+    ctx->editor_password_toggle = RT_NULL;
     ctx->editor_saved_index = LVWW_INVALID_INDEX;
 }
 
@@ -1089,20 +1189,80 @@ static void lvww_city_input_cb(lv_event_t *event)
     }
 }
 
+static void lvww_firmware_update_cb(lv_event_t *event)
+{
+    lvww_ctx_t *ctx = (lvww_ctx_t *)lv_event_get_user_data(event);
+    lvww_firmware_update_cb_t callback;
+    void *user_ctx;
+    int result;
+
+    if (!ctx ||
+        (ctx->firmware_info.state != LVWW_FIRMWARE_AVAILABLE &&
+         ctx->firmware_info.state != LVWW_FIRMWARE_ERROR))
+        return;
+
+    rt_mutex_take(ctx->lock, RT_WAITING_FOREVER);
+    callback = ctx->firmware_update_cb;
+    user_ctx = ctx->firmware_update_user_ctx;
+    rt_mutex_release(ctx->lock);
+    if (!callback)
+    {
+        lvww_show_toast(ctx, "OTA 下载服务尚未接入", RT_TRUE);
+        return;
+    }
+
+    result = callback(user_ctx, &ctx->firmware_info);
+    if (result == RT_EOK)
+    {
+        ctx->firmware_info.state = LVWW_FIRMWARE_DOWNLOADING;
+        ctx->firmware_info.progress_percent = 0U;
+        lvww_refresh_firmware(ctx);
+        lvww_show_toast(ctx, "固件更新任务已开始", RT_FALSE);
+    }
+    else
+    {
+        lvww_show_toast(ctx, "无法启动固件更新", RT_TRUE);
+    }
+}
+
 
 static void lvww_build_home(lvww_ctx_t *ctx)
 {
     lv_obj_t *page = ctx->pages[LVWW_PAGE_HOME];
     lv_obj_t *weather = lvww_panel(page, ctx->cfg.panel_color, 18);
-    lv_obj_set_size(weather, 470, 330);
+    lv_obj_t *firmware;
+
+    lv_obj_set_size(weather, 378, 330);
     lv_obj_set_pos(weather, 14, 14);
+
+    ctx->home_city = lvww_label(ctx, weather, "未选择城市",
+                                ctx->cfg.font_city, lv_color_white());
+    lv_obj_set_width(ctx->home_city, 340);
+    lv_label_set_long_mode(ctx->home_city, LV_LABEL_LONG_DOT);
+    lv_obj_set_pos(ctx->home_city, 4, 2);
+    ctx->home_net = lvww_label(ctx, weather, "无线离线",
+                               ctx->cfg.font_ui,
+                               lv_color_hex(0xF07B88));
+    lv_obj_set_style_bg_color(ctx->home_net, lv_color_hex(0x26354A), 0);
+    lv_obj_set_style_bg_opa(ctx->home_net, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(ctx->home_net, 10, 0);
+    lv_obj_set_style_pad_hor(ctx->home_net, 10, 0);
+    lv_obj_set_style_pad_ver(ctx->home_net, 5, 0);
+    lv_obj_align(ctx->home_net, LV_ALIGN_TOP_RIGHT, -4, 108);
+    ctx->home_clock = lvww_label(ctx, weather, "--:--",
+                                 ctx->cfg.font_large, lv_color_white());
+    lv_obj_set_pos(ctx->home_clock, 4, 38);
+    ctx->home_date = lvww_label(ctx, weather, "等待网络校时",
+                                ctx->cfg.font_ui,
+                                lv_color_hex(0xAEB8CC));
+    lv_obj_align(ctx->home_date, LV_ALIGN_BOTTOM_LEFT, 4, -4);
 
     ctx->home_weather_icon = lvww_label(ctx, weather, "--", ctx->cfg.font_large,
                                         ctx->cfg.accent_color);
-    lv_obj_set_pos(ctx->home_weather_icon, 18, 30);
+    lv_obj_set_pos(ctx->home_weather_icon, 6, 108);
     ctx->home_temperature = lvww_label(ctx, weather, "--.-", ctx->cfg.font_large,
                                        lv_color_white());
-    lv_obj_set_pos(ctx->home_temperature, 178, 18);
+    lv_obj_set_pos(ctx->home_temperature, 174, 38);
     ctx->home_temperature_unit = lvww_label(ctx, weather, "℃", &lvww_font_cjk_32,
                                             lv_color_white());
     lv_obj_align_to(ctx->home_temperature_unit, ctx->home_temperature,
@@ -1114,32 +1274,85 @@ static void lvww_build_home(lvww_ctx_t *ctx)
     ctx->home_wind = lvww_label(ctx, weather, "风速 -- km/h", ctx->cfg.font_ui,
                                 lv_color_white());
     ctx->home_range = lvww_label(ctx, weather, "今日 -- / --℃", ctx->cfg.font_ui,
-                                 lv_color_white());
-    lv_obj_set_pos(ctx->home_apparent, 22, 150);
-    lv_obj_set_pos(ctx->home_humidity, 238, 150);
-    lv_obj_set_pos(ctx->home_wind, 22, 205);
-    lv_obj_set_pos(ctx->home_range, 238, 205);
+                                  lv_color_white());
+    lv_obj_set_pos(ctx->home_apparent, 6, 172);
+    lv_obj_set_pos(ctx->home_humidity, 184, 172);
+    lv_obj_set_pos(ctx->home_wind, 6, 214);
+    lv_obj_set_pos(ctx->home_range, 184, 214);
     ctx->home_updated = lvww_label(ctx, weather, "联网后自动刷新", ctx->cfg.font_ui,
                                    lv_color_hex(0x8591A8));
-    lv_obj_align(ctx->home_updated, LV_ALIGN_BOTTOM_LEFT, 10, -4);
+    lv_obj_align(ctx->home_updated, LV_ALIGN_BOTTOM_RIGHT, -4, -4);
 
-    lv_obj_t *info = lvww_panel(page, lv_color_hex(0x1C2639), 18);
-    lv_obj_set_size(info, 288, 330);
-    lv_obj_set_pos(info, 498, 14);
-    ctx->home_city = lvww_label(ctx, info, "未选择城市", ctx->cfg.font_city,
-                                lv_color_white());
-    lv_obj_set_width(ctx->home_city, 260);
-    lv_label_set_long_mode(ctx->home_city, LV_LABEL_LONG_DOT);
-    lv_obj_set_pos(ctx->home_city, 4, 4);
-    ctx->home_clock = lvww_label(ctx, info, "--:--", ctx->cfg.font_large,
-                                 lv_color_white());
-    lv_obj_align(ctx->home_clock, LV_ALIGN_TOP_MID, 0, 70);
-    ctx->home_date = lvww_label(ctx, info, "等待网络校时", &lvww_font_cjk_16,
-                                lv_color_hex(0xAEB8CC));
-    lv_obj_align(ctx->home_date, LV_ALIGN_TOP_MID, 0, 140);
-    ctx->home_net = lvww_label(ctx, info, "无线离线", ctx->cfg.font_ui,
-                               lv_color_hex(0xF07B88));
-    lv_obj_align(ctx->home_net, LV_ALIGN_BOTTOM_MID, 0, -28);
+    {
+        lv_obj_t *divider = lv_obj_create(weather);
+        lv_obj_set_size(divider, 348, 1);
+        lv_obj_set_pos(divider, 4, 154);
+        lv_obj_set_style_bg_color(divider, lv_color_hex(0x334158), 0);
+        lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(divider, 0, 0);
+        lv_obj_set_style_pad_all(divider, 0, 0);
+        lv_obj_clear_flag(divider, LV_OBJ_FLAG_SCROLLABLE);
+    }
+
+    firmware = lvww_panel(page, lv_color_hex(0x1C2639), 18);
+    lv_obj_set_size(firmware, 380, 330);
+    lv_obj_set_pos(firmware, 406, 14);
+
+    {
+        lv_obj_t *title = lvww_label(ctx, firmware, "系统更新",
+                                     ctx->cfg.font_city,
+                                     lv_color_white());
+        lv_obj_set_pos(title, 4, 2);
+    }
+    ctx->home_firmware_state = lvww_label(
+        ctx, firmware, "等待检查", ctx->cfg.font_ui,
+        lv_color_hex(0xF2C66D));
+    lv_obj_align(ctx->home_firmware_state, LV_ALIGN_TOP_RIGHT, -4, 4);
+    ctx->home_firmware_current = lvww_label(
+        ctx, firmware, "当前版本  未知", ctx->cfg.font_ui,
+        lv_color_hex(0xAEB8CC));
+    lv_obj_set_pos(ctx->home_firmware_current, 4, 48);
+    ctx->home_firmware_available = lvww_label(
+        ctx, firmware, "可用版本  等待服务器", ctx->cfg.font_ui,
+        lv_color_white());
+    lv_obj_set_pos(ctx->home_firmware_available, 4, 80);
+    {
+        lv_obj_t *notes_title = lvww_label(
+            ctx, firmware, "更新内容", ctx->cfg.font_ui,
+            lv_color_hex(0x8591A8));
+        lv_obj_set_pos(notes_title, 4, 118);
+    }
+    ctx->home_firmware_notes = lvww_label(
+        ctx, firmware, "设备联网后将通过 MQTT 查询最新固件。",
+        ctx->cfg.font_ui, lv_color_hex(0xDCE3F0));
+    lv_obj_set_size(ctx->home_firmware_notes, 348, 76);
+    lv_label_set_long_mode(ctx->home_firmware_notes, LV_LABEL_LONG_DOT);
+    lv_obj_set_pos(ctx->home_firmware_notes, 4, 148);
+
+    ctx->home_firmware_progress = lv_bar_create(firmware);
+    lv_obj_set_size(ctx->home_firmware_progress, 348, 8);
+    lv_obj_set_pos(ctx->home_firmware_progress, 4, 232);
+    lv_bar_set_range(ctx->home_firmware_progress, 0, 100);
+    lv_obj_set_style_bg_color(ctx->home_firmware_progress,
+                              lv_color_hex(0x334158), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(ctx->home_firmware_progress,
+                              ctx->cfg.accent_color, LV_PART_INDICATOR);
+    lv_obj_add_flag(ctx->home_firmware_progress, LV_OBJ_FLAG_HIDDEN);
+
+    ctx->home_firmware_button = lvww_button(
+        ctx, firmware, "正在检查", 348, 52);
+    lv_obj_set_pos(ctx->home_firmware_button, 4, 252);
+    ctx->home_firmware_button_label =
+        lv_obj_get_child(ctx->home_firmware_button, 0);
+    lv_obj_set_style_bg_color(ctx->home_firmware_button,
+                              lv_color_hex(0x3A465B),
+                              LV_STATE_DISABLED);
+    lv_obj_set_style_text_opa(ctx->home_firmware_button,
+                              LV_OPA_60, LV_STATE_DISABLED);
+    lv_obj_add_event_cb(ctx->home_firmware_button,
+                        lvww_firmware_update_cb,
+                        LV_EVENT_CLICKED, ctx);
+    lvww_refresh_firmware(ctx);
 }
 
 static void lvww_build_wifi(lvww_ctx_t *ctx)

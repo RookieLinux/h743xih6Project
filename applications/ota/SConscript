@@ -1,0 +1,18 @@
+from building import *
+
+cwd = GetCurrentDir()
+src = ['ota.c', 'ota_hash.c']
+if GetDepend('RT_USING_SAL') and GetDepend('RT_USING_WIFI'):
+    src += ['ota_wifi.c']
+if (GetDepend('RT_USING_SAL') and GetDepend('RT_USING_WIFI') and
+        GetDepend('PKG_USING_UMQTT') and
+        GetDepend('PKG_USING_WEBCLIENT') and
+        GetDepend('PKG_USING_CJSON')):
+    src += [
+        'ota_mqtt_protocol.c',
+        'ota_http.c',
+        'ota_remote.c',
+    ]
+group = DefineGroup('app_ota', src, CPPPATH=[cwd])
+
+Return('group')

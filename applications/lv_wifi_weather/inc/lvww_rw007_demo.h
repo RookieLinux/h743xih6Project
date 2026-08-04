@@ -9,6 +9,7 @@ extern "C" {
 
 int lvww_rw007_demo_start(lv_obj_t *parent);
 void lvww_rw007_demo_stop(void);
+lvww_ctx_t *lvww_rw007_demo_ui(void);
 
 #ifdef __cplusplus
 }

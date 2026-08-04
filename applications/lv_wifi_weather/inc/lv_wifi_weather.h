@@ -19,6 +19,8 @@ extern "C" {
 #define LVWW_CITY_NAME_MAX_LEN         47
 #define LVWW_TIMEZONE_MAX_LEN          39
 #define LVWW_ERROR_TEXT_MAX_LEN        63
+#define LVWW_FIRMWARE_VERSION_MAX_LEN  23
+#define LVWW_RELEASE_NOTES_MAX_LEN     191
 
 #define LVWW_KV_FLAG_SECRET            (1u << 0)
 
@@ -112,11 +114,44 @@ typedef struct
 
 typedef enum
 {
+    LVWW_FIRMWARE_CHECKING = 0,
+    LVWW_FIRMWARE_UP_TO_DATE,
+    LVWW_FIRMWARE_AVAILABLE,
+    LVWW_FIRMWARE_DOWNLOADING,
+    LVWW_FIRMWARE_VERIFYING,
+    LVWW_FIRMWARE_READY,
+    LVWW_FIRMWARE_ERROR
+} lvww_firmware_state_t;
+
+typedef struct
+{
+    lvww_firmware_state_t state;
+    uint32_t current_version_code;
+    uint32_t available_version_code;
+    uint32_t package_size;
+    uint8_t progress_percent;
+    uint8_t mandatory;
+    char current_version[LVWW_FIRMWARE_VERSION_MAX_LEN + 1];
+    char available_version[LVWW_FIRMWARE_VERSION_MAX_LEN + 1];
+    char release_notes[LVWW_RELEASE_NOTES_MAX_LEN + 1];
+} lvww_firmware_info_t;
+
+/*
+ * Called in the LVGL/UI thread. The callback must only enqueue the update
+ * request and return quickly; network and Flash work belongs in a worker.
+ */
+typedef int (*lvww_firmware_update_cb_t)(
+    void *user_ctx,
+    const lvww_firmware_info_t *firmware);
+
+typedef enum
+{
     LVWW_EVT_WIFI_SCAN_RESULT = 0,
     LVWW_EVT_WIFI_STATE,
     LVWW_EVT_CITY_SEARCH_RESULT,
     LVWW_EVT_WEATHER_RESULT,
     LVWW_EVT_TIME_RESULT,
+    LVWW_EVT_FIRMWARE_INFO,
     LVWW_EVT_ERROR
 } lvww_event_type_t;
 
@@ -143,6 +178,7 @@ typedef struct
             lvww_city_t items[LVWW_MAX_CITY_RESULTS];
         } city_search;
         lvww_weather_t weather;
+        lvww_firmware_info_t firmware;
         struct
         {
             uint64_t utc_epoch;
@@ -191,6 +227,7 @@ typedef struct
 } lvww_port_ops_t;
 
 void lvww_config_init(lvww_config_t *config);
+void lvww_firmware_info_init(lvww_firmware_info_t *info);
 
 /*
  * Search the built-in, UTF-8 common-city catalog.  Passing an empty query
@@ -210,6 +247,14 @@ void lvww_destroy(lvww_ctx_t *ctx);
 
 /* Thread-safe. The event is copied before this function returns. */
 int lvww_post_event(lvww_ctx_t *ctx, const lvww_event_t *event);
+
+/* Thread-safe helpers for an MQTT/OTA controller. */
+int lvww_set_firmware_info(lvww_ctx_t *ctx,
+                           const lvww_firmware_info_t *info);
+void lvww_set_firmware_update_callback(
+    lvww_ctx_t *ctx,
+    lvww_firmware_update_cb_t callback,
+    void *user_ctx);
 
 /* Optional helpers for applications that want to drive the visible page. */
 void lvww_show_home(lvww_ctx_t *ctx);

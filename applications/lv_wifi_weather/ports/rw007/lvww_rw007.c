@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/errno.h>
 #include <time.h>
 
 #include <drivers/rtc.h>
@@ -13,11 +14,17 @@
 #include <sys/time.h>
 #include <wlan_mgnt.h>
 
+#define DBG_TAG "lvww.rw007"
+#define DBG_LVL DBG_INFO
+#include <rtdbg.h>
+
 #define LVWW_RW007_QUEUE_DEPTH       8
+#define LVWW_RW007_CITY_QUEUE_DEPTH  4
 /* DNS/SAL/newlib run synchronously in this worker.  A 6 KiB stack can
  * underflow into the dynamically allocated rt_thread control block while
  * resolving the first host after Wi-Fi comes online. */
 #define LVWW_RW007_STACK_SIZE        (16 * 1024)
+#define LVWW_RW007_CITY_STACK_SIZE   (12 * 1024)
 #define LVWW_RW007_SCAN_TIMEOUT_MS   12000
 #define LVWW_RW007_READY_TIMEOUT_MS  15000
 #define LVWW_RW007_SOCKET_TIMEOUT_MS 8000
@@ -62,11 +69,15 @@ struct lvww_rw007
 {
     lvww_ctx_t *ctx;
     rt_mq_t queue;
+    rt_mq_t city_queue;
     rt_thread_t worker;
+    rt_thread_t city_worker;
     rt_sem_t stopped;
+    rt_sem_t city_stopped;
     rt_sem_t scan_done;
     rt_mutex_t lock;
     rt_bool_t running;
+    rt_bool_t city_running;
     rt_bool_t disconnecting;
     lvww_wifi_ap_t scan_results[LVWW_MAX_WIFI_RESULTS];
     uint16_t scan_count;
@@ -95,7 +106,9 @@ static rt_bool_t rw_request_current(lvww_rw007_t *backend,
 {
     rt_bool_t current;
     rt_mutex_take(backend->lock, RT_WAITING_FOREVER);
-    current = backend->running &&
+    current = (operation == LVWW_OP_CITY_SEARCH
+                   ? backend->city_running
+                   : backend->running) &&
               operation <= LVWW_OP_STORAGE &&
               backend->latest[operation] == request_id &&
               backend->cancelled[operation] != request_id;
@@ -211,27 +224,58 @@ static int socket_connect_host(const char *host, const char *service, int type)
     struct addrinfo *result = RT_NULL;
     struct addrinfo *item;
     struct timeval timeout;
+    int dns_result;
     int sock = -1;
     rt_memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = type;
-    if (sal_getaddrinfo(host, service, &hints, &result) != 0 || !result)
+    LOG_I("DNS lookup start: host=%s service=%s", host, service);
+    dns_result = sal_getaddrinfo(host, service, &hints, &result);
+    if (dns_result != 0 || !result)
+    {
+        LOG_E("DNS lookup failed: host=%s service=%s rc=%d",
+              host, service, dns_result);
         return -1;
+    }
     timeout.tv_sec = LVWW_RW007_SOCKET_TIMEOUT_MS / 1000;
     timeout.tv_usec = (LVWW_RW007_SOCKET_TIMEOUT_MS % 1000) * 1000;
     for (item = result; item; item = item->ai_next)
     {
+        const struct sockaddr_in *address =
+            (const struct sockaddr_in *)item->ai_addr;
+        const char *ip = inet_ntoa(address->sin_addr);
+        LOG_I("DNS resolved: host=%s ip=%s", host, ip ? ip : "?");
         sock = sal_socket(item->ai_family, item->ai_socktype, item->ai_protocol);
         if (sock < 0)
+        {
+            LOG_W("socket create failed: host=%s errno=%d", host, errno);
             continue;
-        sal_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-        sal_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+        }
+        if (sal_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
+                           &timeout, sizeof(timeout)) != 0 ||
+            sal_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO,
+                           &timeout, sizeof(timeout)) != 0)
+        {
+            LOG_W("socket timeout setup failed: host=%s errno=%d",
+                  host, errno);
+        }
+        LOG_I("TCP connect start: host=%s ip=%s service=%s",
+              host, ip ? ip : "?", service);
         if (sal_connect(sock, item->ai_addr, item->ai_addrlen) == 0)
+        {
+            LOG_I("TCP connected: host=%s ip=%s service=%s",
+                  host, ip ? ip : "?", service);
             break;
+        }
+        LOG_W("TCP connect failed: host=%s ip=%s service=%s errno=%d",
+              host, ip ? ip : "?", service, errno);
         sal_closesocket(sock);
         sock = -1;
     }
     sal_freeaddrinfo(result);
+    if (sock < 0)
+        LOG_E("all TCP connect attempts failed: host=%s service=%s",
+              host, service);
     return sock;
 }
 
@@ -319,9 +363,13 @@ static int http_get_json(const char *host, const char *path,
 
     if (json) *json = RT_NULL;
     if (server_time) *server_time = 0;
+    LOG_I("HTTP GET start: host=%s path=%s", host, path);
     sock = socket_connect_host(host, "80", SOCK_STREAM);
     if (sock < 0)
+    {
+        LOG_E("HTTP connect failed: host=%s", host);
         return -RT_ERROR;
+    }
     rc = rt_snprintf(request, sizeof(request),
                      "GET %s HTTP/1.1\r\n"
                      "Host: %s\r\n"
@@ -333,6 +381,8 @@ static int http_get_json(const char *host, const char *path,
     if (rc <= 0 || (rt_size_t)rc >= sizeof(request) ||
         socket_send_all(sock, request, (rt_size_t)rc) != RT_EOK)
     {
+        LOG_E("HTTP request send failed: host=%s rc=%d errno=%d",
+              host, rc, errno);
         sal_closesocket(sock);
         return -RT_ERROR;
     }
@@ -340,6 +390,8 @@ static int http_get_json(const char *host, const char *path,
     response = (char *)rt_malloc(LVWW_RW007_HTTP_MAX + 1u);
     if (!response)
     {
+        LOG_E("HTTP response allocation failed: host=%s size=%u",
+              host, (unsigned)(LVWW_RW007_HTTP_MAX + 1u));
         sal_closesocket(sock);
         return -RT_ENOMEM;
     }
@@ -351,6 +403,8 @@ static int http_get_json(const char *host, const char *path,
             break;
         if (rc < 0)
         {
+            LOG_E("HTTP receive failed: host=%s received=%u errno=%d",
+                  host, (unsigned)used, errno);
             rt_free(response);
             sal_closesocket(sock);
             return -RT_ETIMEOUT;
@@ -360,6 +414,8 @@ static int http_get_json(const char *host, const char *path,
     sal_closesocket(sock);
     if (used == 0 || used >= LVWW_RW007_HTTP_MAX)
     {
+        LOG_E("HTTP response size invalid: host=%s received=%u limit=%u",
+              host, (unsigned)used, (unsigned)LVWW_RW007_HTTP_MAX);
         rt_free(response);
         return -RT_EFULL;
     }
@@ -368,6 +424,8 @@ static int http_get_json(const char *host, const char *path,
     if (!header_end || sscanf(response, "HTTP/%*u.%*u %d", &status) != 1 ||
         status < 200 || status >= 300)
     {
+        LOG_E("HTTP status/header invalid: host=%s status=%d received=%u",
+              host, status, (unsigned)used);
         rt_free(response);
         return -RT_ERROR;
     }
@@ -385,6 +443,8 @@ static int http_get_json(const char *host, const char *path,
     {
         if (decode_chunked(body, body_length, &body_length) != RT_EOK)
         {
+            LOG_E("HTTP chunked decode failed: host=%s body=%u",
+                  host, (unsigned)body_length);
             rt_free(response);
             return -RT_ERROR;
         }
@@ -393,6 +453,8 @@ static int http_get_json(const char *host, const char *path,
     {
         if ((rt_size_t)content_length > body_length)
         {
+            LOG_E("HTTP body truncated: host=%s expected=%ld actual=%u",
+                  host, content_length, (unsigned)body_length);
             rt_free(response);
             return -RT_ERROR;
         }
@@ -408,6 +470,8 @@ static int http_get_json(const char *host, const char *path,
         *json = response;
     else
         rt_free(response);
+    LOG_I("HTTP GET complete: host=%s status=%d body=%u",
+          host, status, (unsigned)body_length);
     return RT_EOK;
 }
 
@@ -789,6 +853,7 @@ static void rw_do_weather(lvww_rw007_t *backend, const lvww_rw_cmd_t *cmd)
     const char *daily, *daily_end;
     lvww_event_t event;
     double value;
+    int http_result;
     if (!rt_wlan_is_ready())
     {
         rw_post_error(backend, cmd, LVWW_OP_WEATHER_FETCH, -RT_ERROR,
@@ -801,8 +866,11 @@ static void rw_do_weather(lvww_rw007_t *backend, const lvww_rw_cmd_t *cmd)
                 "&daily=temperature_2m_max,temperature_2m_min"
                 "&timezone=auto&forecast_days=1&timeformat=unixtime",
                 cmd->data.city.latitude, cmd->data.city.longitude);
-    if (http_get_json(LVWW_FORECAST_HOST, path, &json, RT_NULL) != RT_EOK)
+    http_result = http_get_json(LVWW_FORECAST_HOST, path, &json, RT_NULL);
+    if (http_result != RT_EOK)
     {
+        LOG_E("weather HTTP request failed: city=%s rc=%d",
+              cmd->data.city.name, http_result);
         rw_post_error(backend, cmd, LVWW_OP_WEATHER_FETCH, -RT_ERROR,
                       "天气服务请求失败");
         return;
@@ -852,10 +920,19 @@ static void rw_do_time(lvww_rw007_t *backend, const lvww_rw_cmd_t *cmd)
     char *json = RT_NULL;
     uint64_t server_time = 0;
     lvww_event_t event;
-    if (!rt_wlan_is_ready() ||
-        http_get_json(LVWW_FORECAST_HOST, path, &json, &server_time) != RT_EOK ||
-        server_time < 1577836800u)
+    int http_result;
+    if (!rt_wlan_is_ready())
     {
+        LOG_W("time sync skipped: Wi-Fi is not ready");
+        rw_post_error(backend, cmd, LVWW_OP_TIME_SYNC, -RT_ERROR,
+                      "网络校时失败");
+        return;
+    }
+    http_result = http_get_json(LVWW_FORECAST_HOST, path, &json, &server_time);
+    if (http_result != RT_EOK || server_time < 1577836800u)
+    {
+        LOG_E("time sync HTTP request failed: rc=%d server_time=%u",
+              http_result, (unsigned)server_time);
         if (json) rt_free(json);
         rw_post_error(backend, cmd, LVWW_OP_TIME_SYNC, -RT_ERROR,
                       "网络校时失败");
@@ -887,27 +964,71 @@ static void rw_worker_entry(void *parameter)
         case RW_CMD_SCAN: rw_do_scan(backend, &cmd); break;
         case RW_CMD_CONNECT: rw_do_connect(backend, &cmd); break;
         case RW_CMD_DISCONNECT: rw_do_disconnect(backend, &cmd); break;
-        case RW_CMD_CITY: rw_do_city(backend, &cmd); break;
         case RW_CMD_WEATHER: rw_do_weather(backend, &cmd); break;
         case RW_CMD_TIME: rw_do_time(backend, &cmd); break;
         default: break;
         }
         rt_memset(&cmd, 0, sizeof(cmd));
     }
+    rt_mutex_take(backend->lock, RT_WAITING_FOREVER);
     backend->running = RT_FALSE;
+    rt_mutex_release(backend->lock);
     rt_sem_release(backend->stopped);
+}
+
+static void rw_city_worker_entry(void *parameter)
+{
+    lvww_rw007_t *backend = (lvww_rw007_t *)parameter;
+    lvww_rw_cmd_t cmd;
+
+    while (backend->city_running)
+    {
+        if (rt_mq_recv(backend->city_queue, &cmd, sizeof(cmd),
+                       RT_WAITING_FOREVER) != RT_EOK)
+            continue;
+        if (cmd.type == RW_CMD_STOP)
+            break;
+        if (cmd.type != RW_CMD_CITY ||
+            !rw_request_current(backend, LVWW_OP_CITY_SEARCH,
+                                cmd.request_id))
+            continue;
+        LOG_I("city search start: request=%u query=%s",
+              (unsigned)cmd.request_id, cmd.data.query);
+        rw_do_city(backend, &cmd);
+        LOG_I("city search complete: request=%u",
+              (unsigned)cmd.request_id);
+        rt_memset(&cmd, 0, sizeof(cmd));
+    }
+    rt_mutex_take(backend->lock, RT_WAITING_FOREVER);
+    backend->city_running = RT_FALSE;
+    rt_mutex_release(backend->lock);
+    rt_sem_release(backend->city_stopped);
 }
 
 static int rw_send(lvww_rw007_t *backend, const lvww_rw_cmd_t *cmd)
 {
     lvww_operation_t operation;
-    if (!backend || !cmd || !backend->running) return -RT_ERROR;
+    rt_mq_t queue;
+    rt_bool_t running;
+
+    if (!backend || !cmd) return -RT_ERROR;
     operation = rw_operation(cmd->type);
     rt_mutex_take(backend->lock, RT_WAITING_FOREVER);
-    backend->latest[operation] = cmd->request_id;
-    backend->cancelled[operation] = 0;
+    running = cmd->type == RW_CMD_CITY
+                  ? backend->city_running
+                  : backend->running;
+    queue = cmd->type == RW_CMD_CITY
+                ? backend->city_queue
+                : backend->queue;
+    if (running)
+    {
+        backend->latest[operation] = cmd->request_id;
+        backend->cancelled[operation] = 0;
+    }
     rt_mutex_release(backend->lock);
-    return rt_mq_send(backend->queue, cmd, sizeof(*cmd));
+    if (!running || !queue)
+        return -RT_ERROR;
+    return rt_mq_send(queue, cmd, sizeof(*cmd));
 }
 
 static int rw_wifi_scan(void *user_ctx, uint32_t request_id)
@@ -1078,26 +1199,40 @@ lvww_rw007_t *lvww_rw007_create(void)
     if (!backend) return RT_NULL;
     backend->queue = rt_mq_create("lvwrq", sizeof(lvww_rw_cmd_t),
                                   LVWW_RW007_QUEUE_DEPTH, RT_IPC_FLAG_FIFO);
+    backend->city_queue = rt_mq_create("lvwcq", sizeof(lvww_rw_cmd_t),
+                                       LVWW_RW007_CITY_QUEUE_DEPTH,
+                                       RT_IPC_FLAG_FIFO);
     backend->stopped = rt_sem_create("lvwrs", 0, RT_IPC_FLAG_FIFO);
+    backend->city_stopped = rt_sem_create("lvwcs", 0, RT_IPC_FLAG_FIFO);
     backend->scan_done = rt_sem_create("lvwsc", 0, RT_IPC_FLAG_FIFO);
     backend->lock = rt_mutex_create("lvwrl", RT_IPC_FLAG_FIFO);
-    if (!backend->queue || !backend->stopped || !backend->scan_done ||
-        !backend->lock)
+    if (!backend->queue || !backend->city_queue || !backend->stopped ||
+        !backend->city_stopped || !backend->scan_done || !backend->lock)
     {
         if (backend->queue) rt_mq_delete(backend->queue);
+        if (backend->city_queue) rt_mq_delete(backend->city_queue);
         if (backend->stopped) rt_sem_delete(backend->stopped);
+        if (backend->city_stopped) rt_sem_delete(backend->city_stopped);
         if (backend->scan_done) rt_sem_delete(backend->scan_done);
         if (backend->lock) rt_mutex_delete(backend->lock);
         rt_free(backend);
         return RT_NULL;
     }
     backend->running = RT_TRUE;
+    backend->city_running = RT_TRUE;
     backend->worker = rt_thread_create("lvwwrw", rw_worker_entry, backend,
                                        LVWW_RW007_STACK_SIZE, 20, 10);
-    if (!backend->worker)
+    backend->city_worker = rt_thread_create(
+        "lvwwcity", rw_city_worker_entry, backend,
+        LVWW_RW007_CITY_STACK_SIZE, 21, 10);
+    if (!backend->worker || !backend->city_worker)
     {
+        if (backend->worker) rt_thread_delete(backend->worker);
+        if (backend->city_worker) rt_thread_delete(backend->city_worker);
         rt_mq_delete(backend->queue);
+        rt_mq_delete(backend->city_queue);
         rt_sem_delete(backend->stopped);
+        rt_sem_delete(backend->city_stopped);
         rt_sem_delete(backend->scan_done);
         rt_mutex_delete(backend->lock);
         rt_free(backend);
@@ -1106,6 +1241,7 @@ lvww_rw007_t *lvww_rw007_create(void)
     rt_wlan_register_event_handler(RT_WLAN_EVT_STA_DISCONNECTED,
                                    rw_disconnected_cb, backend);
     rt_thread_startup(backend->worker);
+    rt_thread_startup(backend->city_worker);
     return backend;
 }
 
@@ -1140,22 +1276,43 @@ const lvww_port_ops_t *lvww_rw007_get_ops(void)
 void lvww_rw007_destroy(lvww_rw007_t *backend)
 {
     lvww_rw_cmd_t cmd;
+    rt_bool_t network_was_running;
+    rt_bool_t city_was_running;
     if (!backend) return;
     lvww_rw007_bind(backend, RT_NULL);
     rt_wlan_unregister_event_handler(RT_WLAN_EVT_STA_DISCONNECTED);
     rt_wlan_unregister_event_handler(RT_WLAN_EVT_SCAN_REPORT);
     rt_wlan_unregister_event_handler(RT_WLAN_EVT_SCAN_DONE);
-    if (backend->running)
+    rt_mutex_take(backend->lock, RT_WAITING_FOREVER);
+    network_was_running = backend->running;
+    city_was_running = backend->city_running;
+    rt_mutex_release(backend->lock);
+    rt_memset(&cmd, 0, sizeof(cmd));
+    cmd.type = RW_CMD_STOP;
+    if (network_was_running)
     {
-        rt_memset(&cmd, 0, sizeof(cmd));
-        cmd.type = RW_CMD_STOP;
-        rt_mq_send(backend->queue, &cmd, sizeof(cmd));
+        rt_mq_urgent(backend->queue, &cmd, sizeof(cmd));
+    }
+    if (city_was_running)
+    {
+        rt_mq_urgent(backend->city_queue, &cmd, sizeof(cmd));
+    }
+    if (network_was_running)
+    {
         if (rt_sem_take(backend->stopped,
                         rt_tick_from_millisecond(10000)) != RT_EOK)
             rt_thread_delete(backend->worker);
     }
+    if (city_was_running)
+    {
+        if (rt_sem_take(backend->city_stopped,
+                        rt_tick_from_millisecond(10000)) != RT_EOK)
+            rt_thread_delete(backend->city_worker);
+    }
     rt_mq_delete(backend->queue);
+    rt_mq_delete(backend->city_queue);
     rt_sem_delete(backend->stopped);
+    rt_sem_delete(backend->city_stopped);
     rt_sem_delete(backend->scan_done);
     rt_mutex_delete(backend->lock);
     rt_memset(backend, 0, sizeof(*backend));

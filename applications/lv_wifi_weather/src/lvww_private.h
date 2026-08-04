@@ -13,6 +13,7 @@
 #define LVWW_STORE_VERSION     1u
 #define LVWW_INVALID_INDEX     (-1)
 #define LVWW_WIFI_SAVED_TAG    0x100u
+#define LVWW_NETWORK_RETRY_SECONDS 60u
 
 typedef struct
 {
@@ -65,6 +66,13 @@ struct lvww_ctx
     lv_obj_t *home_wind;
     lv_obj_t *home_range;
     lv_obj_t *home_updated;
+    lv_obj_t *home_firmware_state;
+    lv_obj_t *home_firmware_current;
+    lv_obj_t *home_firmware_available;
+    lv_obj_t *home_firmware_notes;
+    lv_obj_t *home_firmware_progress;
+    lv_obj_t *home_firmware_button;
+    lv_obj_t *home_firmware_button_label;
     lv_obj_t *wifi_status;
     lv_obj_t *wifi_list;
     lv_obj_t *city_input;
@@ -82,6 +90,7 @@ struct lvww_ctx
     lv_obj_t *editor_password;
     lv_obj_t *editor_security_label;
     lv_obj_t *editor_password_label;
+    lv_obj_t *editor_password_toggle;
 
     lvww_binding_t nav_bindings[3];
     lvww_binding_t wifi_bindings[LVWW_MAX_WIFI_RESULTS + LVWW_MAX_PROFILES];
@@ -102,11 +111,16 @@ struct lvww_ctx
     lvww_event_t pump_event;
     lvww_wifi_state_t wifi_state;
     char connected_ssid[LVWW_SSID_MAX_LEN + 1];
+    lvww_firmware_info_t firmware_info;
+    lvww_firmware_update_cb_t firmware_update_cb;
+    void *firmware_update_user_ctx;
 
     uint64_t utc_epoch;
     rt_tick_t utc_tick;
     rt_tick_t weather_tick;
     rt_tick_t time_tick;
+    rt_tick_t weather_retry_tick;
+    rt_tick_t time_retry_tick;
     rt_bool_t time_valid;
 
     uint32_t next_request_id;
@@ -147,6 +161,7 @@ void lvww_upsert_pending_profile(lvww_ctx_t *ctx);
 void lvww_show_toast(lvww_ctx_t *ctx, const char *text, rt_bool_t error);
 void lvww_refresh_clock(lvww_ctx_t *ctx);
 void lvww_refresh_home(lvww_ctx_t *ctx);
+void lvww_refresh_firmware(lvww_ctx_t *ctx);
 void lvww_refresh_wifi(lvww_ctx_t *ctx);
 void lvww_refresh_city_results(lvww_ctx_t *ctx);
 void lvww_close_editor(lvww_ctx_t *ctx);
