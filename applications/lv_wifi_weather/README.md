@@ -6,6 +6,7 @@ RT-Thread 与 LVGL，不直接依赖 WLAN、HTTP、JSON、FlashDB、NTP 或特�
 组件提供：
 
 - 中文深色首页、城市当地时间、当前天气与今日摘要；
+- 首页系统更新卡片、固件版本/更新说明显示及非阻塞确认回调；
 - Wi-Fi 扫描、多账号保存、编辑、删除、连接、断开和最近成功账号自动重连；
 - 共用的 LVGL 屏幕键盘、密码隐藏/显示和 WPA 密码格式检查；
 - 英文/拼音城市搜索、500 ms 防抖、城市时区和天气缓存；
@@ -93,6 +94,27 @@ lvww_post_event(ui, &event);
 `lvww_post_event()` 会复制整个事件，可以从任意 RT-Thread 线程调用。后端不得直接调用
 LVGL。每个结果必须带回原始请求 ID；`request_id == 0` 只用于 Wi-Fi 驱动主动上报的掉线、
 重连等状态。
+
+MQTT/OTA 工作线程可通过线程安全接口更新首页固件卡片：
+
+```c
+lvww_firmware_info_t firmware;
+
+lvww_firmware_info_init(&firmware);
+firmware.state = LVWW_FIRMWARE_AVAILABLE;
+firmware.current_version_code = 0x00010000;
+firmware.available_version_code = 0x00010100;
+rt_strncpy(firmware.current_version, "V1.0.0",
+           sizeof(firmware.current_version) - 1);
+rt_strncpy(firmware.available_version, "V1.1.0",
+           sizeof(firmware.available_version) - 1);
+rt_strncpy(firmware.release_notes, "提升网络稳定性并新增批量 OTA。",
+           sizeof(firmware.release_notes) - 1);
+lvww_set_firmware_info(ui, &firmware);
+```
+
+通过 `lvww_set_firmware_update_callback()` 注册用户确认回调。该回调运行在
+LVGL 线程，只能投递 OTA 工作任务并快速返回，不得直接下载或擦写 Flash。
 
 销毁组件前，应用应阻止新的后端事件。`lvww_destroy()` 会调用活动请求的 `cancel()`，但
 后端仍须保证在取消完成后不再使用已经销毁的 `lvww_ctx_t *`。推荐生命周期顺序为：

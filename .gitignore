@@ -39,3 +39,4 @@ RTE/
 settings/
 *.uvguix*
 applications/lv_wifi_weather/tools/.cache/
+applications/ota/ota_config_local.h

@@ -1,5 +1,7 @@
 # CMake 构建说明
 
+[English](CMAKE_EN.md)
+
 该工程的 CMake 构建不依赖 RT-Thread Studio，也不读取 `Debug` 目录。源码按组件动态发现，配置位于：
 
 - `cmake/components.cmake`

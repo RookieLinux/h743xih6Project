@@ -40,3 +40,8 @@ void lvww_rw007_demo_stop(void)
     demo.ui = RT_NULL;
     demo.backend = RT_NULL;
 }
+
+lvww_ctx_t *lvww_rw007_demo_ui(void)
+{
+    return demo.ui;
+}
