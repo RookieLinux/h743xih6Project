@@ -12,6 +12,8 @@
 #define BOOT_IMAGE_FORMAT_VERSION  1U
 #define BOOT_IMAGE_HEADER_SIZE     256U
 #define BOOT_IMAGE_FLAG_VALID      (1UL << 0)
+#define BOOT_IMAGE_SIGNATURE_SIZE  64U
+#define BOOT_IMAGE_SIGNED_DATA_SIZE 80U
 
 typedef enum
 {
@@ -35,7 +37,7 @@ typedef struct
     uint8_t image_sha256[BOOT_SHA256_DIGEST_SIZE];
     uint16_t signature_algorithm;
     uint16_t signature_size;
-    uint8_t signature[64];
+    uint8_t signature[BOOT_IMAGE_SIGNATURE_SIZE];
     uint8_t reserved[116];
     uint32_t header_crc32;
 } boot_image_header_t;

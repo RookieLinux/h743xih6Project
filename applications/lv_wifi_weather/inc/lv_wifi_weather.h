@@ -21,6 +21,7 @@ extern "C" {
 #define LVWW_ERROR_TEXT_MAX_LEN        63
 #define LVWW_FIRMWARE_VERSION_MAX_LEN  23
 #define LVWW_RELEASE_NOTES_MAX_LEN     191
+#define LVWW_SERVER_IPV4_MAX_LEN       15
 
 #define LVWW_KV_FLAG_SECRET            (1u << 0)
 
@@ -144,6 +145,11 @@ typedef int (*lvww_firmware_update_cb_t)(
     void *user_ctx,
     const lvww_firmware_info_t *firmware);
 
+/* Called in the LVGL/UI thread after the user submits a server IPv4 address. */
+typedef int (*lvww_server_address_cb_t)(
+    void *user_ctx,
+    const char *ipv4_address);
+
 typedef enum
 {
     LVWW_EVT_WIFI_SCAN_RESULT = 0,
@@ -254,6 +260,13 @@ int lvww_set_firmware_info(lvww_ctx_t *ctx,
 void lvww_set_firmware_update_callback(
     lvww_ctx_t *ctx,
     lvww_firmware_update_cb_t callback,
+    void *user_ctx);
+
+/* UI-thread helpers for the server field on the firmware card. */
+void lvww_set_server_address(lvww_ctx_t *ctx, const char *ipv4_address);
+void lvww_set_server_address_callback(
+    lvww_ctx_t *ctx,
+    lvww_server_address_cb_t callback,
     void *user_ctx);
 
 /* Optional helpers for applications that want to drive the visible page. */

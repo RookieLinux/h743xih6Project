@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import pathlib
 import re
@@ -12,11 +13,17 @@ import socket
 import struct
 import time
 import urllib.parse
+import urllib.request
 import zlib
 
 
 PROTOCOL = "ota-v1"
 HARDWARE_ID = 0x48373433
+RFC1918_NETWORKS = tuple(
+    ipaddress.ip_network(network)
+    for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
+BENCHMARK_NETWORK = ipaddress.ip_network("198.18.0.0/15")
 
 
 def encode_remaining_length(value: int) -> bytes:
@@ -81,6 +88,106 @@ def load_connection_config(path: pathlib.Path) -> tuple[str, str, str]:
         parse_c_string_define(text, "OTA_MQTT_USERNAME"),
         parse_c_string_define(text, "OTA_MQTT_PASSWORD"),
     )
+
+
+def is_local_only_host(host: str) -> bool:
+    if host.lower() == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return (
+        address.is_loopback
+        or address.is_unspecified
+        or address.is_link_local
+        or address in BENCHMARK_NETWORK
+    )
+
+
+def is_rfc1918_ipv4(address: str) -> bool:
+    parsed = ipaddress.ip_address(address)
+    return isinstance(parsed, ipaddress.IPv4Address) and any(
+        parsed in network for network in RFC1918_NETWORKS
+    )
+
+
+def detect_lan_ipv4() -> str:
+    """Return a device-visible RFC1918 address, avoiding virtual test routes."""
+    candidates: list[str] = []
+    for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+        address = info[4][0]
+        if address not in candidates and not is_local_only_host(address):
+            candidates.append(address)
+    for address in candidates:
+        if is_rfc1918_ipv4(address):
+            return address
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.connect(("192.0.2.1", 9))
+        address = probe.getsockname()[0]
+    if is_local_only_host(address):
+        raise RuntimeError("no device-visible LAN IPv4 address was detected")
+    return address
+
+
+def build_download_url(
+    explicit_url: str | None,
+    http_host: str | None,
+    http_port: int,
+    broker_host: str,
+    package_name: str,
+) -> str:
+    if explicit_url:
+        download_url = explicit_url
+    else:
+        selected_host = http_host or broker_host
+        if is_local_only_host(selected_host):
+            try:
+                selected_host = detect_lan_ipv4()
+            except (OSError, RuntimeError) as error:
+                raise ValueError(
+                    "MQTT uses a loopback address and no device-visible HTTP host "
+                    "could be detected; pass --http-host <LAN-IP> or --url <URL>"
+                ) from error
+        quoted_name = urllib.parse.quote(package_name)
+        download_url = f"http://{selected_host}:{http_port}/firmware/{quoted_name}"
+
+    parsed = urllib.parse.urlparse(download_url)
+    if parsed.scheme != "http" or not parsed.hostname:
+        raise ValueError("download URL must be an absolute http:// URL")
+    if is_local_only_host(parsed.hostname):
+        raise ValueError(
+            f"download URL host {parsed.hostname!r} is not reachable from the device; "
+            "pass --http-host <LAN-IP> or --url <device-visible-URL>"
+        )
+    return download_url
+
+
+def verify_http_package(download_url: str, package: bytes) -> None:
+    expected_sha256 = hashlib.sha256(package).digest()
+    request = urllib.request.Request(
+        download_url,
+        headers={"User-Agent": "h743-ota-validation/1.0"},
+    )
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(request, timeout=10) as response:
+            served_package = response.read()
+    except Exception as error:
+        raise RuntimeError(
+            f"Caddy package check failed for {download_url}: {error}. "
+            "Make sure Caddy is running and the package exists under /firmware/."
+        ) from error
+    if len(served_package) != len(package):
+        raise RuntimeError(
+            "Caddy is serving a different package size: "
+            f"expected {len(package)}, got {len(served_package)}"
+        )
+    if hashlib.sha256(served_package).digest() != expected_sha256:
+        raise RuntimeError(
+            "Caddy is serving different package contents than --package"
+        )
 
 
 class MqttClient:
@@ -206,6 +313,21 @@ def parse_args() -> argparse.Namespace:
         "--package", type=pathlib.Path, default=root / "Release/h743_V1.0.1.fwpkg"
     )
     parser.add_argument("--url", help="device-visible HTTP package URL")
+    parser.add_argument(
+        "--http-host",
+        help="device-visible Caddy host; defaults to the LAN IPv4 address when MQTT is local",
+    )
+    parser.add_argument(
+        "--http-port",
+        type=int,
+        default=8000,
+        help="Caddy HTTP port used when --url is omitted (default: 8000)",
+    )
+    parser.add_argument(
+        "--skip-http-check",
+        action="store_true",
+        help="publish without first checking that Caddy serves the exact package",
+    )
     parser.add_argument("--version", default="V1.0.1")
     parser.add_argument("--version-code", type=lambda value: int(value, 0), default=0x10001)
     parser.add_argument(
@@ -224,9 +346,18 @@ def main() -> int:
         raise SystemExit(f"unsupported MQTT broker URI: {broker_uri}")
     package = args.package.read_bytes()
     port = parsed.port or 1883
-    download_url = args.url or (
-        f"http://{parsed.hostname}:8000/firmware/{args.package.name}"
-    )
+    try:
+        download_url = build_download_url(
+            args.url,
+            args.http_host,
+            args.http_port,
+            parsed.hostname,
+            args.package.name,
+        )
+        if not args.skip_http_check:
+            verify_http_package(download_url, package)
+    except (ValueError, RuntimeError) as error:
+        raise SystemExit(str(error)) from error
     client = MqttClient(parsed.hostname, port, username, password)
     client.connect()
     client.subscribe(
@@ -237,7 +368,10 @@ def main() -> int:
         ]
     )
     print(f"MQTT connected: {parsed.hostname}:{port}", flush=True)
-    print(f"Serving {args.version} ({args.version_code:#010x}) at {download_url}", flush=True)
+    print(f"Advertised download URL: {download_url}", flush=True)
+    if not args.skip_http_check:
+        print("HTTP package check: OK", flush=True)
+    print(f"Offering {args.version} ({args.version_code:#010x})", flush=True)
     print(
         f"Package: {len(package)} bytes, CRC32={zlib.crc32(package) & 0xFFFFFFFF:08X}, "
         f"SHA256={hashlib.sha256(package).hexdigest()}",

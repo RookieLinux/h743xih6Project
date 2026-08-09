@@ -21,6 +21,8 @@ static const char *const lvww_english_words[] = {
     "wifi", "wuxi", "xiamen", "xian", "zhengzhou", "zhuhai"
 };
 
+static rt_bool_t lvww_server_submit(lvww_ctx_t *ctx);
+
 void lvww_copy_text(char *dst, rt_size_t dst_size, const char *src)
 {
     if (!dst || dst_size == 0)
@@ -346,7 +348,7 @@ void lvww_refresh_firmware(lvww_ctx_t *ctx)
     if (show_progress)
     {
         lv_bar_set_value(ctx->home_firmware_progress,
-                         firmware->progress_percent, LV_ANIM_ON);
+                         firmware->progress_percent, LV_ANIM_OFF);
         lv_obj_clear_flag(ctx->home_firmware_progress, LV_OBJ_FLAG_HIDDEN);
     }
     else
@@ -558,34 +560,55 @@ static void lvww_show_keyboard(lvww_ctx_t *ctx, lv_obj_t *textarea)
     lv_obj_t *previous;
     lv_coord_t keyboard_top;
     lv_coord_t results_height;
+    rt_bool_t server_input;
 
     if (!ctx || !ctx->keyboard || !textarea)
         return;
     previous = lv_keyboard_get_textarea(ctx->keyboard);
+    server_input = textarea == ctx->home_server_input;
     if (previous && previous != textarea)
         lv_obj_clear_state(previous, LV_STATE_FOCUSED);
     if (previous != textarea)
         lvww_pinyin_update_mode(ctx, textarea == ctx->city_input);
     if (ctx->pinyin_ime)
         lv_ime_pinyin_set_mode(ctx->pinyin_ime, LV_IME_PINYIN_MODE_K26);
-    lv_keyboard_set_mode(ctx->keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
+    lv_keyboard_set_mode(ctx->keyboard,
+                         server_input ? LV_KEYBOARD_MODE_NUMBER :
+                                        LV_KEYBOARD_MODE_TEXT_LOWER);
     lv_keyboard_set_textarea(ctx->keyboard, textarea);
     lv_obj_add_state(textarea, LV_STATE_FOCUSED);
     lv_obj_clear_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(ctx->keyboard);
     if (ctx->pinyin_bar)
     {
-        lv_obj_clear_flag(ctx->pinyin_bar, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(ctx->pinyin_bar);
+        if (server_input)
+            lv_obj_add_flag(ctx->pinyin_bar, LV_OBJ_FLAG_HIDDEN);
+        else
+        {
+            lv_obj_clear_flag(ctx->pinyin_bar, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_move_foreground(ctx->pinyin_bar);
+        }
     }
     if (ctx->pinyin_toggle)
     {
-        lv_obj_clear_flag(ctx->pinyin_toggle, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(ctx->pinyin_toggle);
+        if (server_input)
+            lv_obj_add_flag(ctx->pinyin_toggle, LV_OBJ_FLAG_HIDDEN);
+        else
+        {
+            lv_obj_clear_flag(ctx->pinyin_toggle, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_move_foreground(ctx->pinyin_toggle);
+        }
     }
     if (ctx->pinyin_candidates)
-        lv_obj_move_foreground(ctx->pinyin_candidates);
-    if (!ctx->pinyin_enabled)
+    {
+        if (server_input)
+            lv_obj_add_flag(ctx->pinyin_candidates, LV_OBJ_FLAG_HIDDEN);
+        else
+            lv_obj_move_foreground(ctx->pinyin_candidates);
+    }
+    if (server_input)
+        lvww_english_candidates_hide(ctx);
+    else if (!ctx->pinyin_enabled)
         lvww_english_candidates_update(ctx);
     lv_obj_update_layout(ctx->keyboard);
     lv_obj_invalidate(ctx->keyboard);
@@ -663,7 +686,16 @@ static void lvww_keyboard_event_cb(lv_event_t *event)
 #endif
         return;
     }
-    if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL)
+    if (code == LV_EVENT_READY)
+    {
+        lv_obj_t *textarea = ctx && ctx->keyboard
+                                 ? lv_keyboard_get_textarea(ctx->keyboard)
+                                 : RT_NULL;
+        if (ctx && textarea == ctx->home_server_input)
+            lvww_server_submit(ctx);
+        lvww_hide_keyboard(ctx);
+    }
+    else if (code == LV_EVENT_CANCEL)
         lvww_hide_keyboard(ctx);
 }
 
@@ -1189,6 +1221,56 @@ static void lvww_city_input_cb(lv_event_t *event)
     }
 }
 
+static rt_bool_t lvww_server_submit(lvww_ctx_t *ctx)
+{
+    lvww_server_address_cb_t callback;
+    void *user_ctx;
+    const char *address;
+    int result;
+
+    if (!ctx || !ctx->home_server_input)
+        return RT_FALSE;
+    address = lv_textarea_get_text(ctx->home_server_input);
+    if (!address || !address[0])
+    {
+        lvww_show_toast(ctx, "请输入服务器 IP", RT_TRUE);
+        return RT_FALSE;
+    }
+
+    rt_mutex_take(ctx->lock, RT_WAITING_FOREVER);
+    callback = ctx->server_address_cb;
+    user_ctx = ctx->server_address_user_ctx;
+    rt_mutex_release(ctx->lock);
+    if (!callback)
+    {
+        lvww_show_toast(ctx, "服务器配置功能尚未接入", RT_TRUE);
+        return RT_FALSE;
+    }
+
+    result = callback(user_ctx, address);
+    if (result != RT_EOK)
+    {
+        lvww_show_toast(ctx, "服务器 IP 格式无效", RT_TRUE);
+        return RT_FALSE;
+    }
+
+    lvww_copy_text(ctx->server_address, sizeof(ctx->server_address), address);
+    ctx->firmware_info.state = LVWW_FIRMWARE_CHECKING;
+    ctx->firmware_info.progress_percent = 0U;
+    lvww_refresh_firmware(ctx);
+    lvww_show_toast(ctx, "服务器已更新，正在重连", RT_FALSE);
+    return RT_TRUE;
+}
+
+static void lvww_server_button_cb(lv_event_t *event)
+{
+    lvww_ctx_t *ctx = (lvww_ctx_t *)lv_event_get_user_data(event);
+
+    if (lv_event_get_code(event) == LV_EVENT_CLICKED &&
+        lvww_server_submit(ctx))
+        lvww_hide_keyboard(ctx);
+}
+
 static void lvww_firmware_update_cb(lv_event_t *event)
 {
     lvww_ctx_t *ctx = (lvww_ctx_t *)lv_event_get_user_data(event);
@@ -1308,30 +1390,90 @@ static void lvww_build_home(lvww_ctx_t *ctx)
         ctx, firmware, "等待检查", ctx->cfg.font_ui,
         lv_color_hex(0xF2C66D));
     lv_obj_align(ctx->home_firmware_state, LV_ALIGN_TOP_RIGHT, -4, 4);
+    lv_obj_set_style_bg_color(ctx->home_firmware_state,
+                              lv_color_hex(0x2A354A), 0);
+    lv_obj_set_style_bg_opa(ctx->home_firmware_state, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(ctx->home_firmware_state, 8, 0);
+    lv_obj_set_style_pad_hor(ctx->home_firmware_state, 8, 0);
+    lv_obj_set_style_pad_ver(ctx->home_firmware_state, 3, 0);
     ctx->home_firmware_current = lvww_label(
         ctx, firmware, "当前版本  未知", ctx->cfg.font_ui,
         lv_color_hex(0xAEB8CC));
-    lv_obj_set_pos(ctx->home_firmware_current, 4, 48);
+    lv_obj_set_pos(ctx->home_firmware_current, 4, 42);
     ctx->home_firmware_available = lvww_label(
         ctx, firmware, "可用版本  等待服务器", ctx->cfg.font_ui,
         lv_color_white());
-    lv_obj_set_pos(ctx->home_firmware_available, 4, 80);
+    lv_obj_set_pos(ctx->home_firmware_available, 4, 70);
+    {
+        lv_obj_t *server_panel = lv_obj_create(firmware);
+        lv_obj_t *server_title = lvww_label(
+            ctx, server_panel, "服务器 IP", ctx->cfg.font_ui,
+            lv_color_hex(0xAEB8CC));
+        lv_obj_t *server_hint = lvww_label(
+            ctx, server_panel, "MQTT :1883", ctx->cfg.font_ui,
+            lv_color_hex(0x69758B));
+
+        lv_obj_set_size(server_panel, 348, 80);
+        lv_obj_set_pos(server_panel, 4, 100);
+        lv_obj_set_style_bg_color(server_panel, lv_color_hex(0x152033), 0);
+        lv_obj_set_style_bg_opa(server_panel, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(server_panel, 1, 0);
+        lv_obj_set_style_border_color(server_panel,
+                                      lv_color_hex(0x334158), 0);
+        lv_obj_set_style_radius(server_panel, 10, 0);
+        lv_obj_set_style_pad_all(server_panel, 0, 0);
+        lv_obj_clear_flag(server_panel, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_set_pos(server_title, 8, 6);
+        lv_obj_align(server_hint, LV_ALIGN_TOP_RIGHT, -8, 6);
+
+        ctx->home_server_input = lv_textarea_create(server_panel);
+        lv_obj_set_size(ctx->home_server_input, 238, 38);
+        lv_obj_set_pos(ctx->home_server_input, 8, 34);
+        lv_textarea_set_one_line(ctx->home_server_input, RT_TRUE);
+        lv_textarea_set_max_length(ctx->home_server_input,
+                                   LVWW_SERVER_IPV4_MAX_LEN);
+        lv_textarea_set_placeholder_text(ctx->home_server_input,
+                                         "192.168.1.10");
+        lv_textarea_set_text(ctx->home_server_input, ctx->server_address);
+        lvww_style_textarea(ctx, ctx->home_server_input);
+        lv_obj_set_style_bg_color(ctx->home_server_input,
+                                  lv_color_hex(0x0D1728), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(ctx->home_server_input, LV_OPA_COVER,
+                                LV_PART_MAIN);
+        lv_obj_set_style_radius(ctx->home_server_input, 8, LV_PART_MAIN);
+        lv_obj_set_style_pad_hor(ctx->home_server_input, 10,
+                                 LV_PART_MAIN);
+        lv_obj_set_style_pad_ver(ctx->home_server_input, 7,
+                                 LV_PART_MAIN);
+        lv_obj_add_event_cb(ctx->home_server_input, lvww_textarea_focus_cb,
+                            LV_EVENT_FOCUSED, ctx);
+        lv_obj_add_event_cb(ctx->home_server_input, lvww_textarea_focus_cb,
+                            LV_EVENT_CLICKED, ctx);
+
+        ctx->home_server_button = lvww_button(
+            ctx, server_panel, "应用", 86, 38);
+        lv_obj_set_pos(ctx->home_server_button, 254, 34);
+        lv_obj_add_event_cb(ctx->home_server_button, lvww_server_button_cb,
+                            LV_EVENT_CLICKED, ctx);
+    }
+
     {
         lv_obj_t *notes_title = lvww_label(
             ctx, firmware, "更新内容", ctx->cfg.font_ui,
             lv_color_hex(0x8591A8));
-        lv_obj_set_pos(notes_title, 4, 118);
+        lv_obj_set_pos(notes_title, 4, 188);
     }
     ctx->home_firmware_notes = lvww_label(
         ctx, firmware, "设备联网后将通过 MQTT 查询最新固件。",
         ctx->cfg.font_ui, lv_color_hex(0xDCE3F0));
-    lv_obj_set_size(ctx->home_firmware_notes, 348, 76);
+    lv_obj_set_size(ctx->home_firmware_notes, 348, 24);
     lv_label_set_long_mode(ctx->home_firmware_notes, LV_LABEL_LONG_DOT);
-    lv_obj_set_pos(ctx->home_firmware_notes, 4, 148);
+    lv_obj_set_pos(ctx->home_firmware_notes, 4, 210);
 
     ctx->home_firmware_progress = lv_bar_create(firmware);
     lv_obj_set_size(ctx->home_firmware_progress, 348, 8);
-    lv_obj_set_pos(ctx->home_firmware_progress, 4, 232);
+    lv_obj_set_pos(ctx->home_firmware_progress, 4, 238);
     lv_bar_set_range(ctx->home_firmware_progress, 0, 100);
     lv_obj_set_style_bg_color(ctx->home_firmware_progress,
                               lv_color_hex(0x334158), LV_PART_MAIN);
@@ -1340,8 +1482,8 @@ static void lvww_build_home(lvww_ctx_t *ctx)
     lv_obj_add_flag(ctx->home_firmware_progress, LV_OBJ_FLAG_HIDDEN);
 
     ctx->home_firmware_button = lvww_button(
-        ctx, firmware, "正在检查", 348, 52);
-    lv_obj_set_pos(ctx->home_firmware_button, 4, 252);
+        ctx, firmware, "正在检查", 348, 50);
+    lv_obj_set_pos(ctx->home_firmware_button, 4, 254);
     ctx->home_firmware_button_label =
         lv_obj_get_child(ctx->home_firmware_button, 0);
     lv_obj_set_style_bg_color(ctx->home_firmware_button,

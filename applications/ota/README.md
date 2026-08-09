@@ -45,9 +45,21 @@ ota_reboot_to_install(500);
 实现“获得总长度和整包 CRC → 顺序调用 begin/write/finish”的 transport
 适配器，不应自行操作 `download`/`upgrade` 分区。
 
-当前默认签名策略与 Bootloader 一致：只接受 `BOOT_SIGNATURE_NONE`。启用
-签名后，需要在 APP 中覆盖弱函数 `ota_signature_verify()`，并在 Bootloader
-中实现相同公钥与算法的 `boot_signature_verify()`。
+APP 与 Bootloader 现在使用同一个 ECDSA P-256 公钥进行双重验签。签名为
+64 字节大端 `r || s`，覆盖域分隔符、硬件 ID、固件版本、Payload 大小、加载
+地址、CRC32 和 SHA-256 等不可变元数据。默认拒绝 `BOOT_SIGNATURE_NONE`；
+`OTA_ALLOW_UNSIGNED_IMAGES=1` 只能用于从旧版无签名系统迁移，不能用于量产。
+
+现有设备首次迁移时，旧 APP/Bootloader 尚不能识别签名包，需要把包含本验签
+实现的新 APP 用 `mkimage.py --unsigned` 打成唯一一次过渡包。过渡 APP 启动后
+默认立即进入严格模式，后续只接受签名包；再烧写签名 factory 包和严格模式
+Bootloader。不要把 `--unsigned` 继续用于日常发布。
+
+首次开发可运行 `tools/ota_signing_key.py` 生成本机私钥和 APP 工程中的
+`applications/ota/ota_trusted_key.h`。脚本不会修改 Bootloader 工程；确认密钥
+后，需要手动把该头文件复制到 Bootloader 的 `bootloader/ota_trusted_key.h`。
+私钥路径已加入 `.gitignore`，不得提交到仓库；量产必须替换为离线或 HSM 托管
+的生产密钥。
 
 ## 3. Wi-Fi TCP 协议 v1
 
@@ -145,6 +157,10 @@ Broker、账号、密码、是否自动重启和是否启用批次随机延迟�
 STM32 96-bit UID；量产序列号可通过覆盖弱函数
 `ota_remote_get_device_id()` 注入。
 
+运行期间可从首页右侧“系统更新”卡片输入新的服务器 IPv4。界面调用
+`ota_remote_set_server_ip()` 后，控制器会安全断开当前 MQTT 会话，并使用
+`tcp://<IPv4>:1883` 自动重连，无需重启设备。
+
 协议层公开以下与传输无关的接口：
 
 ```c
@@ -164,6 +180,6 @@ payload CRC/SHA 和签名策略，任何失败都会作废未完成的 download 
 或其他持久 KV 时，设备仍会上报 committed/rebooting，但重启后不能可靠补发
 completed。
 
-当前 WebClient 配置仅支持 `http://`，MQTT 也是明文 `tcp://`；默认签名钩子
-还允许无签名镜像。因此此配置只适合受控局域网联调。产品化前必须接入固件签名，
-并启用 MQTT TLS 与 HTTPS。
+当前 WebClient 配置仍仅支持 `http://`，MQTT 也是明文 `tcp://`。固件签名已经
+提供端到端来源认证，但版本元数据、账号和下载内容仍可能被旁路观察或干扰；
+产品化还应启用 MQTT TLS、HTTPS、设备独立凭据和 Broker ACL。

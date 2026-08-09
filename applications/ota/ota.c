@@ -53,6 +53,33 @@ static int partition_write_exact(const struct fal_partition *partition,
     return result == (int)length ? OTA_OK : OTA_ERROR_FLASH;
 }
 
+static int partition_erase_exact(const struct fal_partition *partition,
+                                 uint32_t offset,
+                                 uint32_t length)
+{
+    while (length != 0U)
+    {
+        uint32_t chunk = length < OTA_FLASH_ERASE_CHUNK_SIZE
+                             ? length
+                             : OTA_FLASH_ERASE_CHUNK_SIZE;
+
+        if (fal_partition_erase(partition, offset, chunk) != (int)chunk)
+        {
+            return OTA_ERROR_FLASH;
+        }
+        offset += chunk;
+        length -= chunk;
+
+        /* The UI font and OTA slots share QSPI. Each call releases SFUD's
+         * bus lock, and this yield lets LVGL read glyphs between chunks. */
+        if (length != 0U)
+        {
+            rt_thread_mdelay(1U);
+        }
+    }
+    return OTA_OK;
+}
+
 static int digest_equal(const uint8_t *left, const uint8_t *right,
                         size_t length)
 {
@@ -64,6 +91,18 @@ static int digest_equal(const uint8_t *left, const uint8_t *right,
         difference |= left[index] ^ right[index];
     }
     return difference == 0U;
+}
+
+static int bytes_are_zero(const uint8_t *bytes, size_t length)
+{
+    uint8_t combined = 0U;
+    size_t index;
+
+    for (index = 0U; index < length; ++index)
+    {
+        combined |= bytes[index];
+    }
+    return combined == 0U;
 }
 
 static int header_validate(const boot_image_header_t *header)
@@ -80,13 +119,17 @@ static int header_validate(const boot_image_header_t *header)
         (header->image_size < 8U) ||
         (header->image_size > OTA_IMAGE_MAX_SIZE) ||
         (header->load_address != OTA_APP_BASE) ||
-        (header->signature_size > sizeof(header->signature)))
+        !bytes_are_zero(header->reserved, sizeof(header->reserved)))
     {
         return OTA_ERROR_HEADER;
     }
 
-    if ((header->signature_algorithm == BOOT_SIGNATURE_NONE) &&
-        (header->signature_size != 0U))
+    if (((header->signature_algorithm == BOOT_SIGNATURE_NONE) &&
+         (header->signature_size != 0U)) ||
+        ((header->signature_algorithm == BOOT_SIGNATURE_ECDSA_P256_RAW) &&
+         (header->signature_size != BOOT_IMAGE_SIGNATURE_SIZE)) ||
+        ((header->signature_algorithm != BOOT_SIGNATURE_NONE) &&
+         (header->signature_algorithm != BOOT_SIGNATURE_ECDSA_P256_RAW)))
     {
         return OTA_ERROR_HEADER;
     }
@@ -173,8 +216,8 @@ static int commit_to_upgrade(const boot_image_header_t *header)
     uint32_t position = 0U;
     int result;
 
-    if (fal_partition_erase(ota_context.upgrade, 0U, erase_size) !=
-        (int)erase_size)
+    if (partition_erase_exact(ota_context.upgrade, 0U, erase_size) !=
+        OTA_OK)
     {
         return OTA_ERROR_FLASH;
     }
@@ -300,8 +343,8 @@ int ota_begin(const char *source,
     ota_crc32_init(&ota_context.transfer_crc);
 
     erase_size = round_up_sector(package_size);
-    if (fal_partition_erase(ota_context.download, 0U, erase_size) !=
-        (int)erase_size)
+    if (partition_erase_exact(ota_context.download, 0U, erase_size) !=
+        OTA_OK)
     {
         set_error(OTA_ERROR_FLASH);
         rt_mutex_release(ota_context.lock);
@@ -539,16 +582,4 @@ int ota_reboot_to_install(uint32_t delay_ms)
     }
     rt_hw_cpu_reset();
     return OTA_OK;
-}
-
-#if defined(__GNUC__)
-__attribute__((weak))
-#endif
-int ota_signature_verify(
-    const boot_image_header_t *header,
-    const uint8_t image_digest[BOOT_SHA256_DIGEST_SIZE])
-{
-    (void)image_digest;
-    return (header->signature_algorithm == BOOT_SIGNATURE_NONE) &&
-           (header->signature_size == 0U);
 }

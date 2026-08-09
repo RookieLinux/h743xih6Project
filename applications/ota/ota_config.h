@@ -18,6 +18,7 @@
 #define OTA_UPGRADE_PARTITION_NAME   "upgrade"
 
 #define OTA_FLASH_SECTOR_SIZE         4096UL
+#define OTA_FLASH_ERASE_CHUNK_SIZE    (64UL * 1024UL)
 #define OTA_SLOT_SIZE                 (1024UL * 1024UL)
 #define OTA_IMAGE_PAYLOAD_OFFSET      OTA_FLASH_SECTOR_SIZE
 #define OTA_IMAGE_MAX_SIZE            (OTA_SLOT_SIZE - OTA_IMAGE_PAYLOAD_OFFSET)
@@ -29,8 +30,8 @@
  * Keep these values identical to the --version passed to Bootloader
  * tools/mkimage.py for this APP build.
  */
-#define OTA_CURRENT_FIRMWARE_VERSION_CODE  0x00010001UL
-#define OTA_CURRENT_FIRMWARE_VERSION_TEXT  "V1.0.1"
+#define OTA_CURRENT_FIRMWARE_VERSION_CODE  0x00010004UL
+#define OTA_CURRENT_FIRMWARE_VERSION_TEXT  "V1.0.4"
 
 #define OTA_COPY_BUFFER_SIZE          1024U
 #define OTA_SOURCE_NAME_MAX           15U
@@ -50,10 +51,10 @@
 #define OTA_MQTT_BROKER_URI           "tcp://127.0.0.1:1883"
 #endif
 #ifndef OTA_MQTT_USERNAME
-#define OTA_MQTT_USERNAME             ""
+#define OTA_MQTT_USERNAME             "test_user"
 #endif
 #ifndef OTA_MQTT_PASSWORD
-#define OTA_MQTT_PASSWORD             ""
+#define OTA_MQTT_PASSWORD             "123456"
 #endif
 
 #define OTA_MQTT_JSON_MAX_SIZE        1536U
@@ -61,7 +62,7 @@
 #define OTA_MQTT_PUBLISH_TIMEOUT_MS   5000U
 #define OTA_MQTT_RETRY_DELAY_MS       5000U
 #define OTA_MQTT_THREAD_STACK_SIZE    (10U * 1024U)
-#define OTA_MQTT_THREAD_PRIORITY      20U
+#define OTA_MQTT_THREAD_PRIORITY      21U
 #define OTA_MQTT_QUEUE_DEPTH          4U
 #define OTA_MQTT_TX_QUEUE_DEPTH       8U
 #define OTA_MQTT_TX_THREAD_STACK_SIZE (6U * 1024U)
@@ -73,8 +74,18 @@
 #define OTA_HTTP_BUFFER_SIZE          2048U
 #define OTA_HTTP_TIMEOUT_MS           15000U
 #define OTA_HTTP_PROGRESS_STEP        5U
+#define OTA_UI_PROGRESS_INTERVAL_MS   200U
+#define OTA_MQTT_PROGRESS_INTERVAL_MS 2000U
 
 #define OTA_BOOTLOADER_VERSION_TEXT   "V1.0.0"
+
+/*
+ * Set to 1 only while migrating devices that still require unsigned
+ * packages. Production firmware must keep this disabled.
+ */
+#ifndef OTA_ALLOW_UNSIGNED_IMAGES
+#define OTA_ALLOW_UNSIGNED_IMAGES     0
+#endif
 
 #endif
 #endif
