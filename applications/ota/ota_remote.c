@@ -16,6 +16,8 @@
 #define DBG_LVL DBG_INFO
 #include <rtdbg.h>
 
+#define OTA_REMOTE_MQTT_PORT 1883U
+
 typedef enum
 {
     OTA_REMOTE_CMD_MQTT_MESSAGE = 0,
@@ -54,6 +56,7 @@ static rt_uint32_t mqtt_tx_thread_stack[
 typedef struct
 {
     char broker_uri[OTA_REMOTE_BROKER_URI_MAX_LEN + 1U];
+    char pending_broker_uri[OTA_REMOTE_BROKER_URI_MAX_LEN + 1U];
     char username[OTA_REMOTE_CREDENTIAL_MAX_LEN + 1U];
     char password[OTA_REMOTE_CREDENTIAL_MAX_LEN + 1U];
     char device_id[OTA_MQTT_DEVICE_ID_MAX_LEN + 1U];
@@ -83,6 +86,9 @@ typedef struct
     rt_thread_t tx_thread;
     uint8_t mqtt_ready;
     uint8_t mqtt_connect_stage;
+    uint8_t broker_update_pending;
+    rt_tick_t last_ui_progress_tick;
+    rt_tick_t last_mqtt_progress_tick;
     int mqtt_last_result;
 } ota_remote_context_t;
 
@@ -102,6 +108,103 @@ static void copy_text(char *destination,
         rt_strncpy(destination, source, destination_size - 1U);
         destination[destination_size - 1U] = '\0';
     }
+}
+
+static int ipv4_address_valid(const char *address)
+{
+    unsigned value = 0U;
+    unsigned digits = 0U;
+    unsigned octets = 0U;
+    const char *cursor;
+
+    if ((address == RT_NULL) || !address[0])
+    {
+        return 0;
+    }
+    for (cursor = address;; ++cursor)
+    {
+        char ch = *cursor;
+        if ((ch >= '0') && (ch <= '9'))
+        {
+            value = value * 10U + (unsigned)(ch - '0');
+            if ((++digits > 3U) || (value > 255U))
+            {
+                return 0;
+            }
+            continue;
+        }
+        if ((ch != '.') && (ch != '\0'))
+        {
+            return 0;
+        }
+        if (digits == 0U)
+        {
+            return 0;
+        }
+        ++octets;
+        if (ch == '\0')
+        {
+            return octets == 4U;
+        }
+        if (octets >= 4U)
+        {
+            return 0;
+        }
+        value = 0U;
+        digits = 0U;
+    }
+}
+
+static int broker_uri_server_ip(const char *uri,
+                                char *address,
+                                size_t address_size)
+{
+    static const char prefix[] = "tcp://";
+    const char *start;
+    const char *end;
+    size_t length;
+
+    if ((uri == RT_NULL) || (address == RT_NULL) ||
+        (address_size == 0U) ||
+        (strncmp(uri, prefix, sizeof(prefix) - 1U) != 0))
+    {
+        return OTA_ERROR_ARGUMENT;
+    }
+    start = uri + sizeof(prefix) - 1U;
+    end = strchr(start, ':');
+    if (end == RT_NULL)
+    {
+        end = start + strlen(start);
+    }
+    length = (size_t)(end - start);
+    if ((length == 0U) || (length >= address_size))
+    {
+        return OTA_ERROR_SIZE;
+    }
+    memcpy(address, start, length);
+    address[length] = '\0';
+    return ipv4_address_valid(address) ? OTA_OK : OTA_ERROR_ARGUMENT;
+}
+
+static int apply_pending_broker_uri(void)
+{
+    int changed = 0;
+
+    rt_mutex_take(remote.lock, RT_WAITING_FOREVER);
+    if (remote.broker_update_pending)
+    {
+        copy_text(remote.broker_uri, sizeof(remote.broker_uri),
+                  remote.pending_broker_uri);
+        remote.pending_broker_uri[0] = '\0';
+        remote.broker_update_pending = 0U;
+        changed = 1;
+    }
+    rt_mutex_release(remote.lock);
+    if (changed)
+    {
+        LOG_I("MQTT broker updated to %s", remote.broker_uri);
+    }
+    return changed;
 }
 
 static void make_message_id(char *output, size_t output_size)
@@ -219,7 +322,10 @@ static int mqtt_enqueue(const char *topic,
     memcpy(message.payload, json, length + 1U);
     if (rt_mq_send(remote.tx_queue, &message, sizeof(message)) != RT_EOK)
     {
-        LOG_W("dropping MQTT publish: transmit queue is full");
+        if (qos != UMQTT_QOS0)
+        {
+            LOG_W("dropping MQTT publish: transmit queue is full");
+        }
         return OTA_ERROR_STATE;
     }
     return OTA_OK;
@@ -406,6 +512,8 @@ static int http_progress(void *user_ctx,
                          uint32_t total,
                          uint8_t percent)
 {
+    rt_tick_t now;
+
     (void)user_ctx;
     (void)total;
     remote.download_stage = stage;
@@ -416,17 +524,38 @@ static int http_progress(void *user_ctx,
     }
     if (stage == OTA_HTTP_STAGE_DOWNLOAD)
     {
-        ui_set_state(LVWW_FIRMWARE_DOWNLOADING, percent);
+        now = rt_tick_get();
         if (percent == 0U)
         {
+            remote.last_ui_progress_tick = now;
+            remote.last_mqtt_progress_tick = now;
+            ui_set_state(LVWW_FIRMWARE_DOWNLOADING, percent);
             publish_update_event(OTA_MQTT_EVENT_DOWNLOAD_STARTED,
                                  "download", received, percent, OTA_OK);
         }
         else
         {
-            publish_update_event_internal(
-                OTA_MQTT_EVENT_DOWNLOAD_PROGRESS,
-                "download", received, percent, OTA_OK, 1);
+            if ((percent == 100U) ||
+                ((rt_tick_t)(now - remote.last_ui_progress_tick) >=
+                 rt_tick_from_millisecond(OTA_UI_PROGRESS_INTERVAL_MS)))
+            {
+                remote.last_ui_progress_tick = now;
+                ui_set_state(LVWW_FIRMWARE_DOWNLOADING, percent);
+            }
+
+            /* The following QoS 1 verify/commit events carry the terminal
+             * 100% state. Keep progress best-effort and sparse so it cannot
+             * fill the transmit queue ahead of those reliable events. */
+            if ((percent < 100U) &&
+                ((rt_tick_t)(now - remote.last_mqtt_progress_tick) >=
+                 rt_tick_from_millisecond(
+                     OTA_MQTT_PROGRESS_INTERVAL_MS)))
+            {
+                remote.last_mqtt_progress_tick = now;
+                publish_update_event_internal(
+                    OTA_MQTT_EVENT_DOWNLOAD_PROGRESS,
+                    "download", received, percent, OTA_OK, 1);
+            }
         }
     }
     else if (stage == OTA_HTTP_STAGE_VERIFY)
@@ -471,6 +600,8 @@ static void run_update(void)
         return;
     }
     remote.download_stage = OTA_HTTP_STAGE_DOWNLOAD;
+    remote.last_ui_progress_tick = 0;
+    remote.last_mqtt_progress_tick = 0;
     publish_update_event(OTA_MQTT_EVENT_UPDATE_ACCEPTED,
                          "decision", 0U, 0U, OTA_OK);
     if (remote.enable_rollout_delay &&
@@ -670,14 +801,17 @@ static int connect_mqtt(void)
 static void ota_remote_entry(void *parameter)
 {
     ota_remote_command_t command;
+    uint8_t reconnect_requested;
     (void)parameter;
 
     for (;;)
     {
         while (!rt_wlan_is_ready())
         {
+            apply_pending_broker_uri();
             rt_thread_mdelay(1000);
         }
+        apply_pending_broker_uri();
         if (connect_mqtt() != OTA_OK)
         {
             LOG_W("MQTT connect failed; retrying");
@@ -686,9 +820,15 @@ static void ota_remote_entry(void *parameter)
             continue;
         }
         LOG_I("MQTT OTA online as %s", remote.device_id);
+        reconnect_requested = 0U;
 
         while (rt_wlan_is_ready() && mqtt_is_linked())
         {
+            if (apply_pending_broker_uri())
+            {
+                reconnect_requested = 1U;
+                break;
+            }
             if (rt_mq_recv(remote.queue, &command, sizeof(command),
                            rt_tick_from_millisecond(1000)) != RT_EOK)
             {
@@ -718,8 +858,15 @@ static void ota_remote_entry(void *parameter)
             }
         }
         disconnect_mqtt();
-        LOG_W("MQTT OTA offline");
-        rt_thread_mdelay(OTA_MQTT_RETRY_DELAY_MS);
+        if (reconnect_requested)
+        {
+            LOG_I("MQTT OTA reconnecting with the new server");
+        }
+        else
+        {
+            LOG_W("MQTT OTA offline");
+            rt_thread_mdelay(OTA_MQTT_RETRY_DELAY_MS);
+        }
     }
 }
 
@@ -729,6 +876,15 @@ static int ui_update_callback(void *user_ctx,
     (void)user_ctx;
     (void)firmware;
     return ota_remote_accept_update() == OTA_OK ? RT_EOK : -RT_ERROR;
+}
+
+static int ui_server_address_callback(void *user_ctx,
+                                      const char *ipv4_address)
+{
+    (void)user_ctx;
+    return ota_remote_set_server_ip(ipv4_address) == OTA_OK
+               ? RT_EOK
+               : -RT_EINVAL;
 }
 
 void ota_remote_default_config(ota_remote_config_t *config)
@@ -857,6 +1013,8 @@ int ota_remote_start(const ota_remote_config_t *config)
 
 void ota_remote_bind_ui(lvww_ctx_t *ui)
 {
+    char server_ip[LVWW_SERVER_IPV4_MAX_LEN + 1U];
+
     if (remote.lock == RT_NULL)
     {
         return;
@@ -868,8 +1026,40 @@ void ota_remote_bind_ui(lvww_ctx_t *ui)
     {
         lvww_set_firmware_update_callback(
             ui, ui_update_callback, RT_NULL);
+        lvww_set_server_address_callback(
+            ui, ui_server_address_callback, RT_NULL);
+        if (broker_uri_server_ip(remote.broker_uri,
+                                 server_ip, sizeof(server_ip)) == OTA_OK)
+        {
+            lvww_set_server_address(ui, server_ip);
+        }
         ui_publish();
     }
+}
+
+int ota_remote_set_server_ip(const char *ipv4_address)
+{
+    char broker_uri[OTA_REMOTE_BROKER_URI_MAX_LEN + 1U];
+    int length;
+
+    if (!ipv4_address_valid(ipv4_address) || (remote.lock == RT_NULL))
+    {
+        return OTA_ERROR_ARGUMENT;
+    }
+    length = rt_snprintf(broker_uri, sizeof(broker_uri),
+                         "tcp://%s:%u", ipv4_address,
+                         (unsigned)OTA_REMOTE_MQTT_PORT);
+    if ((length <= 0) || ((size_t)length >= sizeof(broker_uri)))
+    {
+        return OTA_ERROR_SIZE;
+    }
+
+    rt_mutex_take(remote.lock, RT_WAITING_FOREVER);
+    copy_text(remote.pending_broker_uri,
+              sizeof(remote.pending_broker_uri), broker_uri);
+    remote.broker_update_pending = 1U;
+    rt_mutex_release(remote.lock);
+    return OTA_OK;
 }
 
 int ota_remote_request_version(void)

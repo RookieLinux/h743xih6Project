@@ -53,11 +53,25 @@ transport later, implement an adapter that obtains the total package length
 and package CRC, then calls `begin/write/finish` sequentially. A transport
 adapter must not operate on the `download` or `upgrade` partitions directly.
 
-The default signature policy matches the Bootloader and accepts only
-`BOOT_SIGNATURE_NONE`. When signed images are enabled, override the weak
-`ota_signature_verify()` function in the APP and implement
-`boot_signature_verify()` in the Bootloader using the same public key and
-algorithm.
+The APP and Bootloader now perform independent ECDSA P-256 verification with
+the same trusted public key. The 64-byte big-endian `r || s` signature covers
+a domain separator and immutable metadata including the hardware ID, firmware
+version, payload size, load address, CRC32, and SHA-256. Unsigned images are
+rejected by default. `OTA_ALLOW_UNSIGNED_IMAGES=1` is only for a controlled
+migration from legacy firmware and must not be used in production.
+
+For an existing device, the legacy APP and Bootloader cannot understand a
+signed package. Package the new signature-capable APP once with
+`mkimage.py --unsigned`. After that bridge APP starts, it is strict by default
+and accepts only signed updates. Provision a signed factory package and the
+strict Bootloader next. Do not use `--unsigned` for normal releases.
+
+Run `tools/ota_signing_key.py` once for development to create the local private
+key and `applications/ota/ota_trusted_key.h` in the APP project. The script
+does not modify the Bootloader project; manually copy that header to
+`bootloader/ota_trusted_key.h` when updating the Bootloader trust key. The
+private-key path is ignored by Git. Replace the development key with an offline
+or HSM-managed production key before manufacturing.
 
 ## 3. Wi-Fi TCP Protocol v1
 
@@ -146,10 +160,8 @@ and a retry action. Protocol v1 can begin with manual IP entry. UDP broadcast
 or mDNS discovery may be added later without changing the OTA TCP frame
 protocol.
 
-The current TCP plus CRC/SHA design provides transfer integrity, but it does
-not authenticate the firmware source or provide link confidentiality.
-Production firmware should first enable digital signature verification. TLS
-or forwarding through a controlled gateway can be added when the network
-carries sensitive information. Authentication, device serial numbers, and
-anti-rollback version policies should be introduced as capability-negotiation
-fields in protocol v2 without changing the meaning of protocol v1 fields.
+ECDSA verification now authenticates the firmware end to end. The current
+plain TCP, MQTT, and HTTP transports still provide no link confidentiality.
+Production deployments should additionally use MQTT TLS, HTTPS, per-device
+credentials, and Broker ACLs. Anti-rollback version policies should be added
+without changing the meaning of protocol v1 fields.

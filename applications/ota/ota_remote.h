@@ -44,6 +44,7 @@ typedef struct
 void ota_remote_default_config(ota_remote_config_t *config);
 int ota_remote_start(const ota_remote_config_t *config);
 void ota_remote_bind_ui(lvww_ctx_t *ui);
+int ota_remote_set_server_ip(const char *ipv4_address);
 int ota_remote_request_version(void);
 int ota_remote_accept_update(void);
 int ota_remote_decline_update(void);

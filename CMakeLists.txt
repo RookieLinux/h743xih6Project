@@ -37,7 +37,13 @@ target_compile_definitions(rtthread PRIVATE
     SOC_FAMILY_STM32
     SOC_SERIES_STM32H7
     USE_HAL_DRIVER
-    STM32H743xx)
+    STM32H743xx
+    uECC_SUPPORTS_secp160r1=0
+    uECC_SUPPORTS_secp192r1=0
+    uECC_SUPPORTS_secp224r1=0
+    uECC_SUPPORTS_secp256r1=1
+    uECC_SUPPORTS_secp256k1=0
+    uECC_SUPPORT_COMPRESSED_POINT=0)
 
 set(_cpu_flags
     -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16)

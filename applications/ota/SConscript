@@ -1,7 +1,9 @@
+import os
+
 from building import *
 
 cwd = GetCurrentDir()
-src = ['ota.c', 'ota_hash.c']
+src = ['ota.c', 'ota_hash.c', 'ota_signature.c', 'micro-ecc/uECC.c']
 if GetDepend('RT_USING_SAL') and GetDepend('RT_USING_WIFI'):
     src += ['ota_wifi.c']
 if (GetDepend('RT_USING_SAL') and GetDepend('RT_USING_WIFI') and
@@ -13,6 +15,16 @@ if (GetDepend('RT_USING_SAL') and GetDepend('RT_USING_WIFI') and
         'ota_http.c',
         'ota_remote.c',
     ]
-group = DefineGroup('app_ota', src, CPPPATH=[cwd])
+group = DefineGroup(
+    'app_ota', src,
+    CPPPATH=[cwd, os.path.join(cwd, 'micro-ecc')],
+    CPPDEFINES=[
+        'uECC_SUPPORTS_secp160r1=0',
+        'uECC_SUPPORTS_secp192r1=0',
+        'uECC_SUPPORTS_secp224r1=0',
+        'uECC_SUPPORTS_secp256r1=1',
+        'uECC_SUPPORTS_secp256k1=0',
+        'uECC_SUPPORT_COMPRESSED_POINT=0',
+    ])
 
 Return('group')

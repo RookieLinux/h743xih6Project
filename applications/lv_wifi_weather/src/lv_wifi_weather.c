@@ -469,6 +469,33 @@ void lvww_set_firmware_update_callback(
     rt_mutex_release(ctx->lock);
 }
 
+void lvww_set_server_address(lvww_ctx_t *ctx, const char *ipv4_address)
+{
+    if (!ctx)
+        return;
+    lvww_copy_text(ctx->server_address, sizeof(ctx->server_address),
+                   ipv4_address);
+    if (ctx->home_server_input)
+        lv_textarea_set_text(ctx->home_server_input, ctx->server_address);
+}
+
+void lvww_set_server_address_callback(
+    lvww_ctx_t *ctx,
+    lvww_server_address_cb_t callback,
+    void *user_ctx)
+{
+    if (!ctx || !ctx->lock)
+        return;
+    if (rt_mutex_take(ctx->lock, RT_WAITING_FOREVER) != RT_EOK)
+        return;
+    if (ctx->alive)
+    {
+        ctx->server_address_cb = callback;
+        ctx->server_address_user_ctx = user_ctx;
+    }
+    rt_mutex_release(ctx->lock);
+}
+
 void lvww_destroy(lvww_ctx_t *ctx)
 {
     if (!ctx)

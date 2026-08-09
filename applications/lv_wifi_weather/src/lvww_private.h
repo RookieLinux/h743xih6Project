@@ -73,6 +73,8 @@ struct lvww_ctx
     lv_obj_t *home_firmware_progress;
     lv_obj_t *home_firmware_button;
     lv_obj_t *home_firmware_button_label;
+    lv_obj_t *home_server_input;
+    lv_obj_t *home_server_button;
     lv_obj_t *wifi_status;
     lv_obj_t *wifi_list;
     lv_obj_t *city_input;
@@ -114,6 +116,9 @@ struct lvww_ctx
     lvww_firmware_info_t firmware_info;
     lvww_firmware_update_cb_t firmware_update_cb;
     void *firmware_update_user_ctx;
+    char server_address[LVWW_SERVER_IPV4_MAX_LEN + 1];
+    lvww_server_address_cb_t server_address_cb;
+    void *server_address_user_ctx;
 
     uint64_t utc_epoch;
     rt_tick_t utc_tick;
