@@ -257,6 +257,8 @@ YMODEM 传输后请通过 `ls -l` 确认 `.fnt` 文件大小为 `2913410` 字节
 - `applications/lv_wifi_weather/README.md`
 - `applications/lv_wifi_weather/resources/README.md`
 
+主机侧 Caddy 静态文件服务与 EMQX MQTT Broker 的 Windows/Ubuntu 部署说明：[中文](SERVER_ENVIRONMENT_SETUP.md) | [English](SERVER_ENVIRONMENT_SETUP_EN.md)。
+
 ## Debug 与 Release
 
 | 配置 | 主要选项 | 调试信息 |

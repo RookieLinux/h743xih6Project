@@ -247,6 +247,8 @@ More details:
 - `applications/lv_wifi_weather/README.md`
 - `applications/lv_wifi_weather/resources/README.md`
 
+For Windows/Ubuntu deployment of the Caddy static file server and EMQX MQTT broker, see the setup guide: [English](SERVER_ENVIRONMENT_SETUP_EN.md) | [中文](SERVER_ENVIRONMENT_SETUP.md).
+
 ## Debug and Release
 
 | Configuration | Main options | Debug information |

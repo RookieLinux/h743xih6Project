@@ -132,7 +132,7 @@ ota/v1/device/H743-001122334455/version/response
     "package_size": 812544,
     "package_crc32": "7A4E21C9",
     "package_sha256": "64_HEX_CHARACTERS",
-    "download_url": "http://192.168.1.10:8080/firmware/h743/V1.1.0.fwpkg",
+    "download_url": "http://192.168.1.10:8000/firmware/h743/V1.1.0.fwpkg",
     "release_notes": "提升网络稳定性，新增批量 OTA，并修复界面问题。"
   }
 }
